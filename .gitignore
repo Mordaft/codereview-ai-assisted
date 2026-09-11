@@ -1,0 +1,52 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.vite/
+*.local
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Local runtime and application data
+.codereview/
+*.sqlite
+*.sqlite3
+*.db
+*.trace
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.vscode/launch.json
+.vscode/tasks.json
+.idea
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo

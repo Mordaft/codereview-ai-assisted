@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --open",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "jiti tests/adapters.test.ts"
   },
   "devDependencies": {
     "autoprefixer": "^10.5.5",

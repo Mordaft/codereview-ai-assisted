@@ -424,7 +424,7 @@ function render(filter: 'active' | 'closed' = 'active') {
 
 async function start() {
   if ('serviceWorker' in navigator && import.meta.env.PROD) {
-    await navigator.serviceWorker.register('/sw.js')
+    await navigator.serviceWorker.register('./sw.js')
   }
   await refreshReviews()
   window.addEventListener('hashchange', applyRoute)

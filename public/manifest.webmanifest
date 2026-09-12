@@ -3,13 +3,13 @@
   "short_name": "CodeReview",
   "description": "Revision de codigo asistida por SLMs locales",
   "lang": "es",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f5f8f6",
   "theme_color": "#1c2926",
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "./favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

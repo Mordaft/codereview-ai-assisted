@@ -13,14 +13,17 @@ export interface SlmSuggestion {
   recommendation: string
 }
 
-interface ChatCompletionResponse {
-  choices?: Array<{ finish_reason?: string; message?: { content?: string | Array<{ type?: string; text?: string }> } }>
-}
-
-function contentFromResponse(response: ChatCompletionResponse) {
-  const content = response.choices?.[0]?.message?.content
-  if (typeof content === 'string') return content
-  return content?.map((part) => part.text ?? '').join('') ?? ''
+interface ChatCompletionChunk {
+  choices?: Array<{
+    index?: number
+    finish_reason?: string | null
+    delta?: {
+      role?: string
+      content?: string | null
+      reasoning_content?: string | null
+      reasoning?: string | null
+    }
+  }>
 }
 
 function normalizeSuggestions(items: unknown[]): SlmSuggestion[] {
@@ -83,7 +86,7 @@ function completeJsonObjects(content: string) {
   return objects
 }
 
-function parseSuggestions(content: string): SlmSuggestion[] {
+function parseSuggestions(content: string, allowEmpty = false): SlmSuggestion[] {
   const jsonContent = content.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? content
   try {
     const parsed = JSON.parse(jsonContent.trim()) as { suggestions?: unknown }
@@ -97,7 +100,9 @@ function parseSuggestions(content: string): SlmSuggestion[] {
     })
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && 'filePath' in item && 'message' in item))
   const suggestions = normalizeSuggestions(recovered)
-  if (!suggestions.length) throw new Error('El SLM devolvio un JSON incompleto o sin sugerencias validas.')
+  if (!suggestions.length && !allowEmpty) {
+    throw new Error('El SLM devolvio un JSON incompleto o sin sugerencias validas.')
+  }
   return suggestions
 }
 
@@ -110,11 +115,17 @@ function systemPrompt(instructions: string) {
   return `${instructions}\n\n${reviewOutputContract}\n\nNo respondas con bloques markdown. No expliques el análisis fuera del JSON. Si no encuentras hallazgos, responde exactamente {"suggestions":[]}.`
 }
 
-async function requestFileAnalysis(file: StoredReviewFile) {
+async function requestFileAnalysis(
+  file: StoredReviewFile,
+  onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
+): Promise<SlmSuggestion[]> {
   const config = getSlmConfig()
   const prompts = getReviewPromptConfig()
   const userContent = `Revisa únicamente este fichero. Asocia cada hallazgo al fichero y línea exactos.\n\n${reviewInput(file)}`
   const startedAt = performance.now()
+
+  trace('slm.stream.start', { filePath: file.path, model: config.model, maxTokens: config.maxTokens })
+
   const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -122,6 +133,15 @@ async function requestFileAnalysis(file: StoredReviewFile) {
       model: config.model,
       temperature: config.temperature,
       max_tokens: config.maxTokens,
+      max_completion_tokens: config.maxTokens,
+      stream: true,
+      verbosity: 'low',
+      reasoning: {
+        effort: 'minimal',
+      },
+      chat_template_kwargs: {
+        enable_thinking: false,
+      },
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -160,19 +180,208 @@ async function requestFileAnalysis(file: StoredReviewFile) {
       ],
     }),
   })
-  trace('slm.request.response', { filePath: file.path, status: response.status, elapsedMs: Math.round(performance.now() - startedAt), inputCharacters: userContent.length, contractSent: true })
-  if (!response.ok) throw new Error(`El runtime SLM respondio ${response.status}.`)
-  const data = await response.json() as ChatCompletionResponse
-  if (data.choices?.[0]?.finish_reason === 'length') throw new Error('La respuesta del SLM fue truncada por limite de tokens.')
-  const content = contentFromResponse(data)
-  if (!content) throw new Error('El SLM devolvio una respuesta vacia.')
-  return filterSuggestions(parseSuggestions(content))
+
+  if (!response.ok) {
+    throw new Error(`El runtime SLM respondio ${response.status}.`)
+  }
+  if (!response.body) {
+    throw new Error('El runtime SLM no devolvio un cuerpo de respuesta.')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let streamBuffer = ''
+  let contentBuffer = ''
+  let finishReason: string | null = null
+  let reasoningChars = 0
+  let contentChars = 0
+
+  let inThinkTag = false
+  let thinkTagBuffer = ''
+
+  function processContentDelta(text: string): string {
+    let combined = thinkTagBuffer + text
+    thinkTagBuffer = ''
+    let clean = ''
+
+    while (combined.length > 0) {
+      if (!inThinkTag) {
+        const openIdx = combined.indexOf('<think>')
+        if (openIdx !== -1) {
+          clean += combined.slice(0, openIdx)
+          inThinkTag = true
+          combined = combined.slice(openIdx + 7)
+        } else {
+          const possiblePartial = combined.match(/<t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+          if (possiblePartial && possiblePartial.index !== undefined) {
+            clean += combined.slice(0, possiblePartial.index)
+            thinkTagBuffer = possiblePartial[0]
+            combined = ''
+          } else {
+            clean += combined
+            combined = ''
+          }
+        }
+      } else {
+        const closeIdx = combined.indexOf('</think>')
+        if (closeIdx !== -1) {
+          reasoningChars += closeIdx
+          inThinkTag = false
+          combined = combined.slice(closeIdx + 8)
+        } else {
+          const possiblePartial = combined.match(/<\/t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+          if (possiblePartial && possiblePartial.index !== undefined) {
+            reasoningChars += possiblePartial.index
+            thinkTagBuffer = possiblePartial[0]
+            combined = ''
+          } else {
+            reasoningChars += combined.length
+            combined = ''
+          }
+        }
+      }
+    }
+    return clean
+  }
+
+  const seenSuggestionIds = new Set<string>()
+  const streamedSuggestions: SlmSuggestion[] = []
+
+  function checkIncrementalSuggestions(currentContent: string) {
+    const rawObjects = completeJsonObjects(currentContent)
+    for (const raw of rawObjects) {
+      try {
+        const parsed = JSON.parse(raw) as unknown
+        if (parsed && typeof parsed === 'object' && 'filePath' in parsed && 'message' in parsed) {
+          const normalized = normalizeSuggestions([parsed])
+          for (const suggestion of normalized) {
+            if (!seenSuggestionIds.has(suggestion.id) && !isGenericSuggestion(suggestion)) {
+              seenSuggestionIds.add(suggestion.id)
+              streamedSuggestions.push(suggestion)
+              if (onSuggestion) {
+                try {
+                  void onSuggestion(suggestion)
+                } catch {
+                  // Ignore callback errors during streaming
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Skip incomplete or unparseable object slice
+      }
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    streamBuffer += decoder.decode(value, { stream: true })
+    const lines = streamBuffer.split('\n')
+    streamBuffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const dataStr = trimmed.slice(5).trim()
+      if (dataStr === '[DONE]') continue
+
+      try {
+        const parsed = JSON.parse(dataStr) as ChatCompletionChunk
+        const choice = parsed.choices?.[0]
+        if (!choice) continue
+
+        if (choice.finish_reason) {
+          finishReason = choice.finish_reason
+        }
+
+        const delta = choice.delta
+        if (!delta) continue
+
+        if (delta.reasoning_content) {
+          reasoningChars += delta.reasoning_content.length
+        } else if (delta.reasoning) {
+          reasoningChars += delta.reasoning.length
+        }
+
+        if (delta.content) {
+          const clean = processContentDelta(delta.content)
+          if (clean) {
+            contentBuffer += clean
+            contentChars += clean.length
+            checkIncrementalSuggestions(contentBuffer)
+          }
+        }
+      } catch {
+        // Skip unparseable SSE line
+      }
+    }
+  }
+
+  // Flush any remaining partial think buffer
+  if (thinkTagBuffer) {
+    if (!inThinkTag) {
+      contentBuffer += thinkTagBuffer
+      contentChars += thinkTagBuffer.length
+    } else {
+      reasoningChars += thinkTagBuffer.length
+    }
+  }
+
+  trace('slm.stream.complete', {
+    filePath: file.path,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    reasoningChars,
+    contentChars,
+    finishReason,
+    streamedCount: streamedSuggestions.length,
+  })
+
+  // Attempt final parsing
+  let finalSuggestions: SlmSuggestion[] = []
+  try {
+    finalSuggestions = parseSuggestions(contentBuffer, finishReason !== 'length')
+  } catch (parseError) {
+    if (streamedSuggestions.length > 0) {
+      finalSuggestions = streamedSuggestions
+    } else if (finishReason === 'length') {
+      throw new Error(
+        `El SLM agotó el límite de tokens (${config.maxTokens}) principalmente por razonamiento (${reasoningChars} caracteres de razonamiento) sin generar propuestas completas. Aumenta "maxTokens" en la configuración.`,
+      )
+    } else {
+      throw parseError
+    }
+  }
+
+  // If truncated by length but we have suggestions recovered, accept and trace them
+  if (finishReason === 'length') {
+    const recovered = filterSuggestions(finalSuggestions.length ? finalSuggestions : streamedSuggestions)
+    if (recovered.length > 0) {
+      trace('slm.stream.truncated_recovered', {
+        filePath: file.path,
+        recoveredCount: recovered.length,
+        reasoningChars,
+        contentChars,
+      })
+      return recovered
+    }
+    throw new Error(
+      `El SLM agotó el límite de tokens (${config.maxTokens}) principalmente por razonamiento (${reasoningChars} caracteres de razonamiento) sin generar propuestas completas. Aumenta "maxTokens" en la configuración.`,
+    )
+  }
+
+  return filterSuggestions(finalSuggestions)
 }
 
-export async function analyzeFileWithSlm(file: StoredReviewFile) {
+export async function analyzeFileWithSlm(
+  file: StoredReviewFile,
+  onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
+) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const suggestions = await requestFileAnalysis(file)
+      const suggestions = await requestFileAnalysis(file, onSuggestion)
       trace('slm.file.parsed', { filePath: file.path, attempt, suggestions: suggestions.length })
       return suggestions
     } catch (error) {

@@ -53,7 +53,12 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
   const suggestions: ReviewSuggestion[] = []
   for (const [index, file] of analyzableFiles.entries()) {
     trace('slm.file.start', { reviewId: state.reviewId, filePath: file.path })
-    const fileSuggestions = await analyzeFileWithSlm(file)
+    const fileSuggestions = await analyzeFileWithSlm(file, async (streamedSuggestion) => {
+      if (streamedSuggestion.filePath === file.path) {
+        await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
+        emitReviewProgress(state.reviewId)
+      }
+    })
     const validSuggestions = fileSuggestions.filter((suggestion) => suggestion.filePath === file.path)
     suggestions.push(...validSuggestions)
     await saveSlmSuggestions(state.reviewId, validSuggestions)

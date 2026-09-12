@@ -39,7 +39,7 @@ export function parseReviewUrl(value: string): ReviewLocation {
     }
   }
 
-  const pullIndex = segments.findIndex((segment) => segment === 'pull')
+  const pullIndex = segments.findIndex((segment) => (segment === 'pull' || segment === 'pulls'))
   const changeNumber = Number(segments[pullIndex + 1])
   if (pullIndex === 2 && Number.isInteger(changeNumber) && changeNumber > 0) {
     return {

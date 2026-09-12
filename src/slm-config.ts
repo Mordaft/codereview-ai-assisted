@@ -10,7 +10,7 @@ const defaultConfig: SlmConfig = {
   baseUrl: 'http://localhost:11434/v1',
   model: 'llama3.2',
   temperature: 0.2,
-  maxTokens: 2048,
+  maxTokens: 4096,
 }
 
 export function getSlmConfig(): SlmConfig {

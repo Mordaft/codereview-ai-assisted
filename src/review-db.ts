@@ -24,13 +24,16 @@ export interface StoredReviewFile extends RemoteFile {
   reviewId: number
 }
 
+export type CommentDecision = 'pendiente' | 'deseable' | 'importante' | 'bloqueante' | 'published' | 'pending' | 'accepted' | 'edited' | 'deleted'
+export type CommentCategory = 'solid' | 'security' | 'quality'
+
 export interface StoredReviewComment extends Omit<RemoteComment, 'id'> {
   id?: number
   reviewId: number
   remoteId: string
   source?: 'remote' | 'slm' | 'human'
-  decision?: 'pending' | 'accepted' | 'edited' | 'published' | 'deleted'
-  category?: 'solid' | 'security' | 'quality'
+  decision?: CommentDecision
+  category?: CommentCategory
   recommendation?: string
   severity?: 'baja' | 'media' | 'alta'
 }
@@ -139,7 +142,7 @@ export async function saveSlmSuggestions(reviewId: number, suggestions: Array<{ 
       line: suggestion.line,
       createdAt: new Date().toISOString(),
       source: 'slm' as const,
-      decision: 'pending' as const,
+      decision: 'pendiente' as const,
       category: suggestion.category,
       recommendation: suggestion.recommendation,
     })))
@@ -165,8 +168,18 @@ export async function updateReviewStatus(id: number, status: ReviewStatus) {
   await database.reviews.update(id, { status, progress: status === 'Cerrada' || status === 'Aprobada' ? 100 : status === 'En curso' ? 68 : 8, updated: 'Ahora' })
 }
 
-export async function updateReviewComment(id: number, changes: { body: string; severity?: 'baja' | 'media' | 'alta' }) {
-  await database.reviewComments.update(id, { body: changes.body, severity: changes.severity, decision: 'edited' })
+export async function updateReviewComment(id: number, changes: {
+  body: string
+  severity?: 'baja' | 'media' | 'alta'
+  category?: CommentCategory
+  decision?: CommentDecision
+}) {
+  await database.reviewComments.update(id, {
+    body: changes.body,
+    ...(changes.severity ? { severity: changes.severity } : {}),
+    ...(changes.category ? { category: changes.category } : {}),
+    ...(changes.decision ? { decision: changes.decision } : {}),
+  })
 }
 
 export async function markReviewCommentPublished(id: number) {
@@ -183,7 +196,14 @@ export async function deleteReviewComment(id: number) {
   })
 }
 
-export async function addManualReviewComment(reviewId: number, input: { path?: string; line?: number; body: string; severity?: 'baja' | 'media' | 'alta' }) {
+export async function addManualReviewComment(reviewId: number, input: {
+  path?: string
+  line?: number
+  body: string
+  severity?: 'baja' | 'media' | 'alta'
+  category?: CommentCategory
+  decision?: CommentDecision
+}) {
   await database.transaction('rw', database.reviews, database.reviewComments, async () => {
     await database.reviewComments.add({
       reviewId,
@@ -194,7 +214,8 @@ export async function addManualReviewComment(reviewId: number, input: { path?: s
       line: input.line,
       createdAt: new Date().toISOString(),
       source: 'human',
-      decision: 'pending',
+      decision: input.decision ?? 'pendiente',
+      category: input.category ?? 'solid',
       severity: input.severity ?? 'media',
     })
     const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()

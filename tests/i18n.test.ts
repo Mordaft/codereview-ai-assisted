@@ -12,6 +12,7 @@ import {
   tCategory,
   tDecision,
   tAuthor,
+  formatRelativeTime,
 } from '../src/i18n/index'
 
 console.log('--- Iniciando pruebas de Internacionalización (i18n) ---')
@@ -124,6 +125,23 @@ function extractKeys(obj: Record<string, unknown>, prefix = ''): string[] {
   assert.equal(t(unknownKey), unknownKey)
 
   console.log('✓ Caso 5 superado: Fallback seguro para claves no existentes')
+}
+
+// Test 6: Formato de tiempo relativo amigable (formatRelativeTime)
+{
+  setLanguage('es')
+  assert.equal(formatRelativeTime('Ahora'), 'Ahora')
+  assert.equal(formatRelativeTime(new Date()), 'Ahora')
+  assert.equal(formatRelativeTime(Date.now() - 5 * 60 * 1000), 'Hace 5 minutos')
+  assert.equal(formatRelativeTime(Date.now() - 2 * 3600 * 1000), 'Hace 2 horas')
+
+  setLanguage('en')
+  assert.equal(formatRelativeTime('Ahora'), 'Just now')
+  assert.equal(formatRelativeTime(new Date()), 'Just now')
+  assert.equal(formatRelativeTime(Date.now() - 5 * 60 * 1000), '5 minutes ago')
+  assert.equal(formatRelativeTime(Date.now() - 2 * 3600 * 1000), '2 hours ago')
+
+  console.log('✓ Caso 6 superado: formatRelativeTime en español e inglés con soporte para valores legados "Ahora"')
 }
 
 console.log('=============================================')

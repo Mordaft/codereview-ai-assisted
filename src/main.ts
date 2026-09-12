@@ -8,6 +8,7 @@ import { onReviewProgress } from './review-events'
 import { getSlmConfig, saveSlmConfig, testSlmConnection, type SlmConfig } from './slm-config'
 import { getReviewPromptConfig, reviewOutputContract, saveReviewPromptConfig } from './review-prompts'
 import {
+  formatRelativeTime,
   getLanguage,
   onLanguageChange,
   t,
@@ -104,12 +105,13 @@ async function publishPendingComments(review: Review) {
 }
 
 function reviewCard(review: Review) {
+  const timeLabel = formatRelativeTime(review.createdAt || review.updated)
   return `
     <button class="review-card bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark" data-review-id="${review.id}" type="button">
       <div class="review-card__topline"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span></div>
       <h3>${review.title}</h3><p class="repository">${review.repository}</p>
       <div class="progress" aria-label="${t('reviews.card.progressAria', { progress: review.progress })}"><span style="width: ${review.progress}%"></span></div>
-      <div class="review-card__meta"><span>${t('reviews.card.commentsCount', { count: review.comments })}</span><span>${review.updated}</span></div>
+      <div class="review-card__meta"><span>${t('reviews.card.commentsCount', { count: review.comments })}</span><span>${timeLabel}</span></div>
     </button>
   `
 }

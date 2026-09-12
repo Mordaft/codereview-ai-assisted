@@ -13,6 +13,7 @@ export interface Review {
   status: ReviewStatus
   progress: number
   comments: number
+  createdAt?: string
   updated: string
   remoteChange?: RemoteChange
   remoteFiles?: RemoteFile[]
@@ -95,6 +96,7 @@ export async function createReview(url: string, snapshot?: { change: RemoteChang
   trace('storage.review.create.start', { provider: location.provider, repositoryPath: location.repositoryPath, changeNumber: location.changeNumber, fileCount: snapshot?.files.length ?? 0, commentCount: snapshot?.comments.length ?? 0 })
   const title = `${location.provider} #${location.changeNumber}: ${location.repository}`
   return database.transaction('rw', database.reviews, database.reviewFiles, database.reviewComments, async () => {
+    const now = new Date().toISOString()
     const reviewId = await database.reviews.add({
       title,
       repository: location.repositoryPath,
@@ -102,7 +104,8 @@ export async function createReview(url: string, snapshot?: { change: RemoteChang
       status: 'En preparacion',
       progress: 8,
       comments: snapshot?.comments.length ?? 0,
-      updated: 'Ahora',
+      createdAt: now,
+      updated: now,
       remoteChange: snapshot?.change,
       remoteFiles: snapshot?.files,
       remoteComments: snapshot?.comments,
@@ -146,26 +149,26 @@ export async function saveSlmSuggestions(reviewId: number, suggestions: Array<{ 
       category: suggestion.category,
       recommendation: suggestion.recommendation,
     })))
-    await database.reviews.update(reviewId, { comments: existingSlmComments.length + newSuggestions.length, updated: 'Ahora' })
+    await database.reviews.update(reviewId, { comments: existingSlmComments.length + newSuggestions.length, updated: new Date().toISOString() })
     suggestions = newSuggestions
   })
   trace('storage.slm-suggestions.complete', { reviewId, count: suggestions.length })
 }
 
 export async function updateReviewProgress(id: number, progress: number) {
-  await database.reviews.update(id, { progress, updated: 'Ahora' })
+  await database.reviews.update(id, { progress, updated: new Date().toISOString() })
 }
 
 export async function clearSlmSuggestions(reviewId: number) {
   await database.transaction('rw', database.reviews, database.reviewComments, async () => {
     await database.reviewComments.where('reviewId').equals(reviewId).filter((comment) => comment.source === 'slm').delete()
     const remainingComments = await database.reviewComments.where('reviewId').equals(reviewId).count()
-    await database.reviews.update(reviewId, { comments: remainingComments, updated: 'Ahora' })
+    await database.reviews.update(reviewId, { comments: remainingComments, updated: new Date().toISOString() })
   })
 }
 
 export async function updateReviewStatus(id: number, status: ReviewStatus) {
-  await database.reviews.update(id, { status, progress: status === 'Cerrada' || status === 'Aprobada' ? 100 : status === 'En curso' ? 68 : 8, updated: 'Ahora' })
+  await database.reviews.update(id, { status, progress: status === 'Cerrada' || status === 'Aprobada' ? 100 : status === 'En curso' ? 68 : 8, updated: new Date().toISOString() })
 }
 
 export async function updateReviewComment(id: number, changes: {
@@ -192,7 +195,7 @@ export async function deleteReviewComment(id: number) {
   await database.transaction('rw', database.reviews, database.reviewComments, async () => {
     await database.reviewComments.delete(id)
     const remainingComments = await database.reviewComments.where('reviewId').equals(comment.reviewId).count()
-    await database.reviews.update(comment.reviewId, { comments: remainingComments, updated: 'Ahora' })
+    await database.reviews.update(comment.reviewId, { comments: remainingComments, updated: new Date().toISOString() })
   })
 }
 
@@ -219,6 +222,6 @@ export async function addManualReviewComment(reviewId: number, input: {
       severity: input.severity ?? 'media',
     })
     const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()
-    await database.reviews.update(reviewId, { comments: totalComments, updated: 'Ahora' })
+    await database.reviews.update(reviewId, { comments: totalComments, updated: new Date().toISOString() })
   })
 }

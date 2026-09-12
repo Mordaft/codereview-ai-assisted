@@ -2,7 +2,7 @@ import './style.css'
 import { hasRepositoryAccessToken, setRepositoryAccessToken } from './browser-session'
 import { trace } from './diagnostics'
 import { getRemoteChange, listRemoteComments, listRemoteFiles, publishRemoteComment } from './platform-api'
-import { parseReviewUrl } from './platform-url'
+import { detectPlatform, parseReviewUrl } from './platform-url'
 import { addManualReviewComment, createReview, deleteReviewComment, getReviewKpis, listReviewComments, listReviews, markReviewCommentPublished, updateReviewComment, updateReviewStatus, type Review, type ReviewStatus } from './review-db'
 import { onReviewProgress } from './review-events'
 import { getSlmConfig, saveSlmConfig, testSlmConnection, type SlmConfig } from './slm-config'
@@ -320,10 +320,56 @@ function render(filter: 'active' | 'closed' = 'active') {
         <footer class="content-footer text-brand-muted-light dark:!text-brand-muted-dark"><span><span class="live-dot"></span> SLM local listo</span><span>Los datos permanecen en este dispositivo</span></footer>
       </main>
     </div>
-    <dialog id="new-review-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-review-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="Cerrar">×</button><span class="eyebrow">NUEVO PROCESO</span><h2>Conectar una revision</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">Introduce la URL de un Pull Request o Merge Request para comenzar.</p><label for="review-url">URL de la MR / PR</label><input id="review-url" name="review-url" type="url" placeholder="https://github.com/empresa/repo/pull/42" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">${accessTokenField}<small id="remote-request-status" class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">Se consultaran los datos de la plataforma antes de crear la revision.</small><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">Cancelar</button><button class="primary-action" id="connect-review" value="default">Continuar</button></div></form></dialog>
+    <dialog id="new-review-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-review-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="Cerrar">×</button><span class="eyebrow">NUEVO PROCESO</span><h2>Conectar una revision</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">Introduce la URL de un Pull Request o Merge Request para comenzar.</p><label for="review-url">URL de la MR / PR</label><input id="review-url" name="review-url" type="url" placeholder="https://github.com/empresa/repo/pull/42" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><div id="url-adapter-preview" class="url-adapter-preview hidden text-xs mt-1.5 p-2 rounded border bg-[#f3f6f4] dark:!bg-[#182521] border-brand-line-light dark:!border-brand-line-dark"></div>${accessTokenField}<small id="remote-request-status" class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">Se adaptará automáticamente al endpoint de la API correspondiente antes de conectar.</small><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">Cancelar</button><button class="primary-action" id="connect-review" value="default">Continuar</button></div></form></dialog>
   `
 
-  document.querySelector('#new-review')?.addEventListener('click', () => document.querySelector<HTMLDialogElement>('#new-review-dialog')?.showModal())
+  const reviewUrlInput = document.querySelector<HTMLInputElement>('#review-url')
+  const urlAdapterPreview = document.querySelector<HTMLDivElement>('#url-adapter-preview')
+
+  const updateUrlPreview = () => {
+    if (!reviewUrlInput || !urlAdapterPreview) return
+    const value = reviewUrlInput.value.trim()
+    if (!value) {
+      urlAdapterPreview.classList.add('hidden')
+      urlAdapterPreview.innerHTML = ''
+      return
+    }
+    const detected = detectPlatform(value)
+    if (detected) {
+      const { info } = detected
+      urlAdapterPreview.classList.remove('hidden')
+      urlAdapterPreview.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="inline-flex items-center gap-1.5 font-medium">
+            <span class="provider provider--${info.provider.toLowerCase()}">${info.provider}</span>
+            <span class="text-brand-primary-light dark:!text-brand-primary-dark font-semibold">${info.repositoryPath} #${info.changeNumber}</span>
+          </span>
+          <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">✓ Adaptado</span>
+        </div>
+        <div class="mt-1 text-[11px] text-brand-muted-light dark:!text-brand-muted-dark truncate" title="${info.endpoints.changeUrl}">
+          <span class="opacity-75">Endpoint API:</span> <code class="font-mono text-[10px] text-[#30433a] dark:!text-[#9cb3a8]">${info.endpoints.changeUrl}</code>
+        </div>
+      `
+    } else if (value.startsWith('http://') || value.startsWith('https://')) {
+      urlAdapterPreview.classList.remove('hidden')
+      urlAdapterPreview.innerHTML = `
+        <div class="text-[11px] text-amber-600 dark:text-amber-400">
+          Introduce una URL de GitHub (/pull/...) o GitLab (/-/merge_requests/...).
+        </div>
+      `
+    } else {
+      urlAdapterPreview.classList.add('hidden')
+      urlAdapterPreview.innerHTML = ''
+    }
+  }
+
+  reviewUrlInput?.addEventListener('input', updateUrlPreview)
+  reviewUrlInput?.addEventListener('change', updateUrlPreview)
+
+  document.querySelector('#new-review')?.addEventListener('click', () => {
+    updateUrlPreview()
+    document.querySelector<HTMLDialogElement>('#new-review-dialog')?.showModal()
+  })
   document.querySelector('#settings-nav')?.addEventListener('click', () => navigate('#/settings'))
   document.querySelector('#theme-toggle')?.addEventListener('click', toggleTheme)
   document.querySelector<HTMLFormElement>('#new-review-form')?.addEventListener('submit', async (event) => {

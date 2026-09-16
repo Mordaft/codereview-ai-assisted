@@ -151,6 +151,91 @@ console.log('--- Iniciando pruebas de Adaptadores de Plataforma ---')
   console.log('✓ Caso 11 superado: Mensajes de error controlados para URLs no soportadas')
 }
 
-console.log('\n=============================================')
-console.log('  ¡TODAS LAS PRUEBAS DE ADAPTADORES HAN PASADO!  ')
-console.log('=============================================')
+// Caso 12: GitLabAdapter.listRemoteFiles obtiene contenido completo mediante Repository Files API
+async function testGitLabListRemoteFiles() {
+  const originalFetch = globalThis.fetch
+  try {
+    const url = 'https://gitlab.com/gitlab-org/gitlab/-/merge_requests/14567'
+    const info = parseReviewUrl(url)
+    const adapter = getAdapter(info.provider)
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const requestUrl = String(input)
+      if (requestUrl.endsWith('/merge_requests/14567')) {
+        return new Response(JSON.stringify({
+          iid: 14567,
+          sha: 'commit-sha-999',
+          source_branch: 'feature-branch',
+          diff_refs: { head_sha: 'commit-sha-999' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (requestUrl.endsWith('/merge_requests/14567/diffs')) {
+        return new Response(JSON.stringify([
+          {
+            new_path: 'src/main.ts',
+            old_path: 'src/main.ts',
+            new_file: false,
+            deleted_file: false,
+            renamed_file: false,
+            diff: '@@ -1,2 +1,2 @@\n-old\n+new',
+          },
+          {
+            new_path: 'obsolete.ts',
+            old_path: 'obsolete.ts',
+            new_file: false,
+            deleted_file: true,
+            renamed_file: false,
+            diff: '@@ -1 +0,0 @@',
+          },
+        ]), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (requestUrl.includes('/repository/files/src%2Fmain.ts')) {
+        const fileContent = 'const greeting: string = "hello full file";'
+        const base64Content = Buffer.from(fileContent, 'utf-8').toString('base64')
+        return new Response(JSON.stringify({
+          file_name: 'main.ts',
+          file_path: 'src/main.ts',
+          encoding: 'base64',
+          content: base64Content,
+          blob_id: 'blob-abc-123',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response('Not found', { status: 404 })
+    }) as typeof fetch
+
+    const files = await adapter.listRemoteFiles(info)
+    assert.equal(files.length, 2)
+
+    // Fichero modificado con contenido completo decodificado
+    const modifiedFile = files.find((f) => f.path === 'src/main.ts')
+    assert.ok(modifiedFile)
+    assert.equal(modifiedFile.status, 'modified')
+    assert.equal(modifiedFile.content, 'const greeting: string = "hello full file";')
+    assert.equal(modifiedFile.patch, '@@ -1,2 +1,2 @@\n-old\n+new')
+    assert.ok(modifiedFile.contentsUrl?.includes('/repository/files/src%2Fmain.ts?ref=commit-sha-999'))
+    assert.ok(modifiedFile.rawUrl?.includes('/repository/files/src%2Fmain.ts/raw?ref=commit-sha-999'))
+    assert.ok(modifiedFile.blobUrl?.includes('/-/blob/commit-sha-999/src/main.ts'))
+
+    // Fichero eliminado (sin consulta de contenido)
+    const deletedFile = files.find((f) => f.path === 'obsolete.ts')
+    assert.ok(deletedFile)
+    assert.equal(deletedFile.status, 'removed')
+    assert.equal(deletedFile.content, undefined)
+    assert.equal(deletedFile.contentsUrl, undefined)
+
+    console.log('✓ Caso 12 superado: GitLabAdapter.listRemoteFiles descarga y decodifica el fichero completo')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+testGitLabListRemoteFiles()
+  .then(() => {
+    console.log('\n=============================================')
+    console.log('  ¡TODAS LAS PRUEBAS DE ADAPTADORES HAN PASADO!  ')
+    console.log('=============================================')
+  })
+  .catch((error) => {
+    console.error('Error en pruebas de adaptadores:', error)
+    process.exit(1)
+  })

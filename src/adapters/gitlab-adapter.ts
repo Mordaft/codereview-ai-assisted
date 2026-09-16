@@ -1,5 +1,5 @@
 import { trace } from '../diagnostics'
-import { platformRequest } from './request'
+import { decodeBase64Content, platformRequest } from './request'
 import type {
   PlatformAdapter,
   PlatformChangeInfo,
@@ -155,33 +155,94 @@ export class GitLabAdapter implements PlatformAdapter {
     }
   }
 
+  private async requestContent(url: string): Promise<string | undefined> {
+    trace('platform.content.start', { url, source: 'gitlab-repository-files-api' })
+    try {
+      const response = await platformRequest<{ content?: string; encoding?: string }>(url)
+      if (!response.content) {
+        trace('platform.content.empty', { url })
+        return undefined
+      }
+      const content = response.encoding === 'base64' || !response.encoding
+        ? decodeBase64Content(response.content)
+        : response.content
+      trace('platform.content.loaded', { url, encoding: response.encoding ?? 'base64' })
+      return content
+    } catch {
+      trace('platform.content.unavailable', { url })
+      return undefined
+    }
+  }
+
   async listRemoteFiles(location: PlatformChangeInfo | ReviewLocation): Promise<RemoteFile[]> {
     const endpoints = this.getEndpoints(location)
-    const data = await platformRequest<Array<{
-      new_path: string
-      old_path: string
-      new_file: boolean
-      deleted_file: boolean
-      renamed_file: boolean
-      diff?: string
-    }>>(endpoints.filesUrl)
 
-    const files = data.map((file) => ({
-      path: file.new_path || file.old_path,
-      status: file.deleted_file
-        ? ('removed' as const)
-        : file.new_file
-        ? ('added' as const)
-        : file.renamed_file
-        ? ('renamed' as const)
-        : ('modified' as const),
-      additions: 0,
-      deletions: 0,
-      patch: file.diff,
-    }))
+    const [mrData, diffData] = await Promise.all([
+      platformRequest<{
+        sha?: string
+        source_branch?: string
+        diff_refs?: { head_sha?: string }
+        source_project_id?: number
+      }>(endpoints.changeUrl),
+      platformRequest<Array<{
+        new_path: string
+        old_path: string
+        new_file: boolean
+        deleted_file: boolean
+        renamed_file: boolean
+        diff?: string
+      }>>(endpoints.filesUrl),
+    ])
 
-    trace('platform.files.loaded', { provider: 'GitLab', count: files.length })
-    return files
+    const ref = mrData.diff_refs?.head_sha || mrData.sha || mrData.source_branch || 'HEAD'
+    const projectId = mrData.source_project_id
+      ? String(mrData.source_project_id)
+      : encodeURIComponent(location.repositoryPath)
+    const apiBase = `${location.baseUrl}/api/v4`
+
+    const files: RemoteFile[] = diffData.map((file) => {
+      const filePath = file.new_path || file.old_path
+      const isDeleted = file.deleted_file
+      const encodedFilePath = encodeURIComponent(filePath)
+      const contentsUrl = !isDeleted
+        ? `${apiBase}/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(ref)}`
+        : undefined
+
+      return {
+        path: filePath,
+        status: isDeleted
+          ? ('removed' as const)
+          : file.new_file
+          ? ('added' as const)
+          : file.renamed_file
+          ? ('renamed' as const)
+          : ('modified' as const),
+        additions: 0,
+        deletions: 0,
+        patch: file.diff,
+        contentsUrl,
+        rawUrl: !isDeleted
+          ? `${apiBase}/projects/${projectId}/repository/files/${encodedFilePath}/raw?ref=${encodeURIComponent(ref)}`
+          : undefined,
+        blobUrl: `${location.baseUrl}/${location.repositoryPath}/-/blob/${encodeURIComponent(ref)}/${filePath}`,
+      }
+    })
+
+    const filesWithContent = await Promise.all(
+      files.map(async (file) => ({
+        ...file,
+        content: file.contentsUrl ? await this.requestContent(file.contentsUrl) : undefined,
+      }))
+    )
+
+    trace('platform.files.loaded', {
+      provider: 'GitLab',
+      count: filesWithContent.length,
+      contentCount: filesWithContent.filter((file) => file.content !== undefined).length,
+      patchCount: filesWithContent.filter((file) => file.patch !== undefined).length,
+    })
+
+    return filesWithContent
   }
 
   async listRemoteComments(location: PlatformChangeInfo | ReviewLocation): Promise<RemoteComment[]> {

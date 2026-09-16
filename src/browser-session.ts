@@ -16,6 +16,7 @@ export function getRepositoryAccessToken() {
 }
 
 export function repositoryAuthHeaders(): HeadersInit {
+  if (!hasRepositoryAccessToken()) return {}
   return {
     Authorization: `Bearer ${getRepositoryAccessToken()}`,
   }

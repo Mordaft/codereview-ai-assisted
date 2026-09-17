@@ -1,6 +1,7 @@
 import { reviewWorkflow, type ReviewGraphState } from './review-graph'
+import { type HumanReviewDecision, ReviewStatus } from './enums'
 
-export type HumanReviewDecision = 'continue' | 'close' | 'approve'
+export type { HumanReviewDecision }
 
 function threadConfig(reviewId: number) {
   return { configurable: { thread_id: `review-${reviewId}` } }
@@ -10,7 +11,7 @@ export async function startReviewWorkflow(reviewId: number) {
   return reviewWorkflow.invoke(
     {
       reviewId,
-      status: 'Pendiente',
+      status: ReviewStatus.PENDING,
     },
     threadConfig(reviewId),
   )
@@ -20,7 +21,7 @@ export async function resumeReviewWorkflow(reviewId: number, decision: HumanRevi
   return reviewWorkflow.invoke(
     {
       reviewId,
-      status: 'En curso',
+      status: ReviewStatus.IN_PROGRESS,
       humanDecision: decision,
     },
     threadConfig(reviewId),

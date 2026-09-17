@@ -10,14 +10,21 @@ import { analyzeFileWithSlm } from './slm-client'
 import { selectAnalyzableReviewFiles } from './review-scope'
 import { emitReviewProgress } from './review-events'
 import { trace } from './diagnostics'
+import {
+  type CommentSeverity,
+  type HumanReviewDecision,
+  ReviewAction,
+  type ReviewStatus as ReviewStatusType,
+  ReviewStatus,
+} from './enums'
 
-export type ReviewGraphStatus = 'Pendiente' | 'En preparacion' | 'En curso' | 'Cerrada' | 'Aprobada'
+export type ReviewGraphStatus = ReviewStatusType
 
 export interface ReviewSuggestion {
   id: string
   filePath: string
   line: number
-  severity: 'baja' | 'media' | 'alta'
+  severity: CommentSeverity
   message: string
   recommendation: string
 }
@@ -33,14 +40,14 @@ const ReviewState = Annotation.Root({
     reducer: (current, update) => update ?? current,
     default: () => [],
   }),
-  humanDecision: Annotation<'continue' | 'close' | 'approve'>,
+  humanDecision: Annotation<HumanReviewDecision>,
 })
 
 async function acquireReviewData(state: typeof ReviewState.State) {
   const files = await listReviewFiles(state.reviewId)
   return {
     reviewId: state.reviewId,
-    status: 'En preparacion' as const,
+    status: ReviewStatus.IN_PREPARATION,
     sourceFiles: files.map((file) => file.path),
   }
 }
@@ -66,10 +73,10 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
     emitReviewProgress(state.reviewId)
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })
   }
-  await updateReviewStatus(state.reviewId, 'En curso')
+  await updateReviewStatus(state.reviewId, ReviewStatus.IN_PROGRESS)
   emitReviewProgress(state.reviewId)
   return {
-    status: 'En curso' as const,
+    status: ReviewStatus.IN_PROGRESS,
     suggestions,
   }
 }
@@ -77,7 +84,11 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
 function waitForHumanReview(state: typeof ReviewState.State) {
   const decision = state.humanDecision
   return {
-    status: decision === 'close' ? 'Cerrada' as const : decision === 'approve' ? 'Aprobada' as const : 'En curso' as const,
+    status: decision === ReviewAction.CLOSE
+      ? ReviewStatus.CLOSED
+      : decision === ReviewAction.APPROVE
+      ? ReviewStatus.APPROVED
+      : ReviewStatus.IN_PROGRESS,
   }
 }
 

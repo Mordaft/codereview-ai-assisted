@@ -19,12 +19,23 @@ import {
   tStatus,
   toggleLanguage,
 } from './i18n'
+import {
+  AppScreen,
+  CommentCategory,
+  CommentLifecycle,
+  CommentSeverity,
+  CommentSource,
+  ProposalDecision,
+  ReviewAction,
+  ReviewFilter,
+  ReviewStatus as ReviewStatusConst,
+} from './enums'
 
 let reviews: Review[] = []
 let reviewKpis = { activeReviews: 0, pendingSlmComments: 0, publishedComments: 0 }
 let selectedReviewId: number | undefined
-let currentScreen: 'reviews' | 'settings' = 'reviews'
-let currentFilter: 'active' | 'closed' = 'active'
+let currentScreen: AppScreen = AppScreen.REVIEWS
+let currentFilter: ReviewFilter = ReviewFilter.ACTIVE
 let currentWorkspaceFileIndex = 0
 
 async function refreshReviews() {
@@ -37,12 +48,12 @@ function parseRoute() {
   const [pathPart, queryPart] = hash.split('?')
   const segments = pathPart.split('/').filter(Boolean)
   const params = new URLSearchParams(queryPart)
-  if (segments[0] === 'settings') return { screen: 'settings' as const }
-  if (segments[0] === 'reviews' && segments[1]) {
+  if (segments[0] === AppScreen.SETTINGS) return { screen: AppScreen.SETTINGS }
+  if (segments[0] === AppScreen.REVIEWS && segments[1]) {
     const reviewId = Number(segments[1])
-    if (!Number.isNaN(reviewId)) return { screen: 'reviews' as const, reviewId }
+    if (!Number.isNaN(reviewId)) return { screen: AppScreen.REVIEWS, reviewId }
   }
-  return { screen: 'reviews' as const, filter: params.get('filter') === 'closed' ? 'closed' as const : 'active' as const }
+  return { screen: AppScreen.REVIEWS, filter: params.get('filter') === ReviewFilter.CLOSED ? ReviewFilter.CLOSED : ReviewFilter.ACTIVE }
 }
 
 function navigate(hash: string) {
@@ -84,21 +95,32 @@ function renderBrandLogoSvg(size = 32, idPrefix = 'brand') {
   return `<svg class="brand-logo" width="${size}" height="${size}" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="${idPrefix}NeuralGrad" x1="8" y1="36" x2="40" y2="10" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#87b743"/><stop offset="60%" stop-color="#c4f36b"/><stop offset="100%" stop-color="#e3ff99"/></linearGradient><filter id="${idPrefix}NeonGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.2" result="blur"/><feComposite in="SourceGraphic" in2="blur" operator="over"/></filter></defs><rect width="48" height="48" rx="12" fill="#17211f"/><path d="M8 26H16" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="26" r="2.6" fill="#17211f" stroke="#c4f36b" stroke-width="2"/><path d="M16 26C18 18 21 17 25 17H28" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.3" stroke-linecap="round"/><circle cx="28" cy="17" r="2.3" fill="#17211f" stroke="#c4f36b" stroke-width="1.8"/><path d="M16 26C18 34 21 35 25 35H28" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.3" stroke-linecap="round"/><circle cx="28" cy="35" r="2.3" fill="#17211f" stroke="#c4f36b" stroke-width="1.8"/><path d="M22 26L26.5 31C27.4 32 28.8 31.4 29.5 30.3L37.5 15" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#${idPrefix}NeonGlow)"/><path d="M38.5 7.5C38.5 9.8 37 11.2 34.8 11.2C37 11.2 38.5 12.6 38.5 14.9C38.5 12.6 40 11.2 42.2 11.2C40 11.2 38.5 9.8 38.5 7.5Z" fill="#c4f36b" filter="url(#${idPrefix}NeonGlow)"/></svg>`
 }
 
-function normalizeDecision(decision?: string): 'pendiente' | 'deseable' | 'importante' | 'bloqueante' {
-  if (!decision || decision === 'pending' || decision === 'edited') return 'pendiente'
-  if (decision === 'deseable' || decision === 'importante' || decision === 'bloqueante' || decision === 'pendiente') return decision
-  return 'pendiente'
+function normalizeDecision(decision?: string): ProposalDecision {
+  if (!decision) return ProposalDecision.PENDING
+  switch (decision.toLowerCase()) {
+    case ProposalDecision.DESIRABLE:
+      return ProposalDecision.DESIRABLE
+    case ProposalDecision.IMPORTANT:
+      return ProposalDecision.IMPORTANT
+    case ProposalDecision.BLOCKING:
+      return ProposalDecision.BLOCKING
+    case ProposalDecision.PENDING:
+    case 'pending':
+    case 'edited':
+    default:
+      return ProposalDecision.PENDING
+  }
 }
 
 async function publishPendingComments(review: Review) {
   if (!review.id || !review.remoteChange?.webUrl) return
   const comments = await listReviewComments(review.id)
-  const pendingComments = comments.filter((comment) => comment.decision !== 'published')
+  const pendingComments = comments.filter((comment) => comment.decision !== CommentLifecycle.PUBLISHED)
   if (!pendingComments.length) return
   const location = parseReviewUrl(review.remoteChange.webUrl)
   for (const comment of pendingComments) {
     const context = comment.path ? `${comment.path}${comment.line ? ':' + comment.line : ''}` : t('workspace.generalComment')
-    const body = `**[${tSeverity(comment.severity ?? 'media')}]** ${context}\n\n${comment.body}`
+    const body = `**[${tSeverity(comment.severity ?? CommentSeverity.MEDIUM)}]** ${context}\n\n${comment.body}`
     await publishRemoteComment(location, { body })
     if (comment.id) await markReviewCommentPublished(comment.id)
   }
@@ -118,36 +140,43 @@ function reviewCard(review: Review) {
 
 async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   currentWorkspaceFileIndex = activeFileIndex
-  const isReviewLocked = review.status === 'Aprobada' || review.status === 'Cerrada'
+  const isReviewLocked = review.status === ReviewStatusConst.APPROVED || review.status === ReviewStatusConst.CLOSED
   const storedComments = review.id ? await listReviewComments(review.id) : []
   const workspaceFiles = review.remoteFiles?.length ? review.remoteFiles.map((file) => ({ path: file.path, type: file.path.split('.').at(-1)?.toUpperCase() ?? 'TXT', lines: (file.content ?? file.patch ?? t('workspace.noFilesDownloadedText')).split('\n') })) : [{ path: t('workspace.noFilesDownloaded'), type: 'TXT', lines: [t('workspace.noFilesDownloadedText')] }]
   const workspaceComments = storedComments.length ? storedComments.map((comment) => ({
     id: comment.id,
     file: comment.path,
     line: comment.line,
-    severity: comment.severity ?? 'media',
+    severity: comment.severity ?? CommentSeverity.MEDIUM,
     message: comment.body,
     author: tAuthor(comment.author, comment.source),
-    category: (comment.category ?? 'solid') as 'solid' | 'security' | 'quality',
+    category: comment.category ?? CommentCategory.SOLID,
     decision: normalizeDecision(comment.decision),
     source: comment.source,
   })) : review.remoteComments?.length ? review.remoteComments.map((comment) => ({
     id: undefined as number | undefined,
     file: comment.path,
     line: comment.line,
-    severity: 'media' as const,
+    severity: CommentSeverity.MEDIUM,
     message: comment.body,
-    author: tAuthor(comment.author, 'remote'),
-    category: 'solid' as const,
-    decision: 'pendiente' as const,
-    source: 'remote' as const,
+    author: tAuthor(comment.author, CommentSource.REMOTE),
+    category: CommentCategory.SOLID,
+    decision: ProposalDecision.PENDING,
+    source: CommentSource.REMOTE,
   })) : []
   const activeFile = workspaceFiles[activeFileIndex] ?? workspaceFiles[0]
   const activeFileComments = workspaceComments.filter((comment) => !comment.file || comment.file === activeFile.path)
-  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions"><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>${isReviewLocked ? `<button class="primary-action" data-decision="reopen" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="close" type="button">${t('common.close')}</button><button class="primary-action" data-decision="approve" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
-    const fileComments = workspaceComments.filter((comment) => comment.file === file.path)
+  const fileCommentsMap = new Map<string, typeof workspaceComments>()
+  for (const comment of workspaceComments) {
+    if (!comment.file) continue
+    const list = fileCommentsMap.get(comment.file) ?? []
+    list.push(comment)
+    fileCommentsMap.set(comment.file, list)
+  }
+  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions"><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
+    const fileComments = fileCommentsMap.get(file.path) ?? []
     const commentCount = fileComments.length
-    const hasHighSeverity = fileComments.some((comment) => comment.severity === 'alta')
+    const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH)
     const badgeClass = hasHighSeverity ? 'comment-badge comment-badge--alta' : 'comment-badge'
     const badgeLabel = t('workspace.reviewProposalBadge', {
       count: commentCount,
@@ -155,7 +184,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     })
     return `<button class="file-item text-brand-muted-light dark:!text-brand-muted-dark ${index === activeFileIndex ? 'file-item--active dark:!bg-[#2e3e37] dark:!text-brand-primary-dark' : 'hover:dark:!bg-[#263730]'}" data-file-index="${index}" type="button"><span class="file-type">${file.type}</span><span class="file-name" title="${file.path}">${file.path}</span>${commentCount > 0 ? `<span class="${badgeClass}" title="${badgeLabel}" aria-label="${badgeLabel}"><svg class="comment-badge__icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12h2.5v2.793a.5.5 0 0 0 .854.353L8.707 12H13.5a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 2h-11z"/></svg><span class="comment-badge__count">${commentCount}</span></span>` : ''}</button>`
   }).join('')}<div class="tree-summary border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><span class="live-dot"></span> ${t('workspace.commentsCount', { count: workspaceComments.length })}</div></aside><main class="code-review-panel bg-[#fbfcfb] dark:!bg-brand-canvas-dark"><div class="code-toolbar bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><strong id="active-file-path" class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFile.path}</strong><span class="text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.diffView', { lines: activeFile.lines.length })}</span></div><div class="code-toolbar__actions"><button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" id="new-file-proposal" type="button">${t('workspace.newProposal')}</button></div></div><div class="code-frame">${activeFile.lines.map((line, index) => { const lineNumber = index + 1; const comments = activeFileComments.filter((comment) => comment.line === lineNumber); return `<div class="code-line ${comments.length ? 'code-line--commented dark:!bg-[#352f19]' : ''}" data-line="${lineNumber}"><span class="line-number text-[#aab6ae] dark:!text-[#62776c]">${lineNumber}</span><code class="text-[#30433a] dark:!text-[#d6e2db]">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</code>${comments.length ? `<span class="line-marker" title="${t('workspace.lineCommentsMarker', { count: comments.length })}">●</span>` : ''}</div>` }).join('')}</div></main><aside class="comments-panel bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="comments-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><span class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.commentsPanelTitle')}</span><h2 class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFileComments.length === 1 ? t('workspace.singleProposalCount') : t('workspace.proposalsCount', { count: activeFileComments.length })}</h2><small class="comments-file text-brand-muted-light dark:!text-brand-muted-dark">${activeFile.path}</small></div></div>${activeFileComments.length ? activeFileComments.map((comment) => `<article class="review-comment bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark" data-comment-id="${comment.id ?? ''}"><div class="comment-meta text-brand-muted-light dark:!text-brand-muted-dark"><span class="severity severity--${comment.severity}">${tSeverity(comment.severity)}</span><span>${comment.file ? `${comment.file}${comment.line ? ':' + comment.line : ''}` : t('workspace.globalProposal')}</span></div><p class="text-brand-primary-light dark:!text-brand-primary-dark">${comment.message}</p><small class="text-brand-muted-light dark:!text-brand-muted-dark">${comment.author} · ${tCategory(comment.category)} · ${tDecision(comment.decision)}</small>${comment.id && !isReviewLocked ? `<div class="comment-actions"><button class="comment-action comment-action--edit bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.edit')}</button><button class="comment-action comment-action--delete bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.delete')}</button></div>` : ''}</article>`).join('') : `<div class="comments-empty text-brand-muted-light dark:!text-brand-muted-dark dark:!border-brand-line-dark">${t('workspace.emptyComments')}</div>`}</aside></div></div>
-    <dialog id="new-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-proposal-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.proposal.eyebrow')}</span><h2 id="new-proposal-title">${t('dialogs.proposal.addTitle')}</h2><p id="new-proposal-hint" class="text-brand-muted-light dark:!text-brand-muted-dark"></p><label for="proposal-message">${t('dialogs.proposal.descLabel')}</label><textarea id="proposal-message" name="proposal-message" rows="3" required placeholder="${t('dialogs.proposal.descPlaceholder')}" class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"></textarea><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-author">${t('dialogs.proposal.authorLabel')}</label><input id="proposal-author" name="proposal-author" type="text" readonly class="proposal-input proposal-input--readonly bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-muted-dark dark:!border-brand-line-dark"></div><div class="proposal-field"><label for="proposal-category">${t('dialogs.proposal.categoryLabel')}</label><select id="proposal-category" name="proposal-category" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="solid">${tCategory('solid')}</option><option value="security">${tCategory('security')}</option><option value="quality">${tCategory('quality')}</option></select></div></div><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-decision">${t('dialogs.proposal.decisionLabel')}</label><select id="proposal-decision" name="proposal-decision" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="pendiente">${tDecision('pendiente')}</option><option value="deseable">${tDecision('deseable')}</option><option value="importante">${tDecision('importante')}</option><option value="bloqueante">${tDecision('bloqueante')}</option></select></div><div class="proposal-field"><span class="field-label">${t('dialogs.proposal.severityLabel')}</span><div class="severity-picker" id="proposal-severity-picker"><label class="severity-option severity-option--baja"><input type="radio" name="proposal-severity" value="baja"><span>${tSeverity('baja')}</span></label><label class="severity-option severity-option--media"><input type="radio" name="proposal-severity" value="media" checked><span>${tSeverity('media')}</span></label><label class="severity-option severity-option--alta"><input type="radio" name="proposal-severity" value="alta"><span>${tSeverity('alta')}</span></label></div></div></div><label class="proposal-global-toggle" id="proposal-global-toggle"><input type="checkbox" id="proposal-global" name="proposal-global"> ${t('dialogs.proposal.globalCheckbox')}</label><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action" id="save-proposal" value="default">${t('dialogs.proposal.saveProposal')}</button></div></form></dialog>
+    <dialog id="new-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-proposal-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.proposal.eyebrow')}</span><h2 id="new-proposal-title">${t('dialogs.proposal.addTitle')}</h2><p id="new-proposal-hint" class="text-brand-muted-light dark:!text-brand-muted-dark"></p><label for="proposal-message">${t('dialogs.proposal.descLabel')}</label><textarea id="proposal-message" name="proposal-message" rows="3" required placeholder="${t('dialogs.proposal.descPlaceholder')}" class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"></textarea><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-author">${t('dialogs.proposal.authorLabel')}</label><input id="proposal-author" name="proposal-author" type="text" readonly class="proposal-input proposal-input--readonly bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-muted-dark dark:!border-brand-line-dark"></div><div class="proposal-field"><label for="proposal-category">${t('dialogs.proposal.categoryLabel')}</label><select id="proposal-category" name="proposal-category" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="${CommentCategory.SOLID}">${tCategory(CommentCategory.SOLID)}</option><option value="${CommentCategory.SECURITY}">${tCategory(CommentCategory.SECURITY)}</option><option value="${CommentCategory.QUALITY}">${tCategory(CommentCategory.QUALITY)}</option></select></div></div><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-decision">${t('dialogs.proposal.decisionLabel')}</label><select id="proposal-decision" name="proposal-decision" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="${ProposalDecision.PENDING}">${tDecision(ProposalDecision.PENDING)}</option><option value="${ProposalDecision.DESIRABLE}">${tDecision(ProposalDecision.DESIRABLE)}</option><option value="${ProposalDecision.IMPORTANT}">${tDecision(ProposalDecision.IMPORTANT)}</option><option value="${ProposalDecision.BLOCKING}">${tDecision(ProposalDecision.BLOCKING)}</option></select></div><div class="proposal-field"><span class="field-label">${t('dialogs.proposal.severityLabel')}</span><div class="severity-picker" id="proposal-severity-picker"><label class="severity-option severity-option--baja"><input type="radio" name="proposal-severity" value="${CommentSeverity.LOW}"><span>${tSeverity(CommentSeverity.LOW)}</span></label><label class="severity-option severity-option--media"><input type="radio" name="proposal-severity" value="${CommentSeverity.MEDIUM}" checked><span>${tSeverity(CommentSeverity.MEDIUM)}</span></label><label class="severity-option severity-option--alta"><input type="radio" name="proposal-severity" value="${CommentSeverity.HIGH}"><span>${tSeverity(CommentSeverity.HIGH)}</span></label></div></div></div><label class="proposal-global-toggle" id="proposal-global-toggle"><input type="checkbox" id="proposal-global" name="proposal-global"> ${t('dialogs.proposal.globalCheckbox')}</label><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action" id="save-proposal" value="default">${t('dialogs.proposal.saveProposal')}</button></div></form></dialog>
     <dialog id="delete-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="delete-proposal-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.delete.eyebrow')}</span><h2>${t('dialogs.delete.title')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.delete.warning')}</p><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action primary-action--danger" value="default">${t('dialogs.delete.confirmBtn')}</button></div></form></dialog>
   `
 
@@ -169,12 +198,17 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   }))
   document.querySelectorAll<HTMLButtonElement>('[data-decision]').forEach((button) => button.addEventListener('click', async () => {
     if (!review.id) return
-    const decision = button.dataset.decision as 'close' | 'approve' | 'reopen'
+    const decision = button.dataset.decision as ReviewAction
     try {
-      if (decision === 'close' || decision === 'approve') await publishPendingComments(review)
-      await updateReviewStatus(review.id, decision === 'approve' ? 'Aprobada' : decision === 'reopen' ? 'En curso' : 'Cerrada')
+      if (decision === ReviewAction.CLOSE || decision === ReviewAction.APPROVE) await publishPendingComments(review)
+      const nextStatus = decision === ReviewAction.APPROVE
+        ? ReviewStatusConst.APPROVED
+        : decision === ReviewAction.REOPEN
+        ? ReviewStatusConst.IN_PROGRESS
+        : ReviewStatusConst.CLOSED
+      await updateReviewStatus(review.id, nextStatus)
       await refreshReviews()
-      navigate(decision === 'reopen' ? `#/reviews/${review.id}` : '#/reviews')
+      navigate(decision === ReviewAction.REOPEN ? `#/reviews/${review.id}` : '#/reviews')
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t('alerts.cannotUpdateReview'))
     }
@@ -198,7 +232,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
         allowGlobalToggle: false,
         editId: commentId,
         initialMessage: target.message,
-        initialSeverity: target.severity as 'baja' | 'media' | 'alta',
+        initialSeverity: target.severity as CommentSeverity,
         initialAuthor: target.author,
         initialCategory: target.category,
         initialDecision: target.decision,
@@ -234,18 +268,18 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     allowGlobalToggle: boolean
     editId?: number
     initialMessage?: string
-    initialSeverity?: 'baja' | 'media' | 'alta'
+    initialSeverity?: CommentSeverity
     initialAuthor?: string
-    initialCategory?: 'solid' | 'security' | 'quality'
-    initialDecision?: 'pendiente' | 'deseable' | 'importante' | 'bloqueante'
+    initialCategory?: CommentCategory
+    initialDecision?: ProposalDecision
   }) => {
     proposalContext = { path: context.path, line: context.line }
     proposalEditId = context.editId
     proposalMessage.value = context.initialMessage ?? ''
     proposalAuthorInput.value = context.initialAuthor ?? t('domain.authors.localReviewer')
-    proposalCategorySelect.value = context.initialCategory ?? 'solid'
-    proposalDecisionSelect.value = context.initialDecision ?? 'pendiente'
-    proposalSeverityInputs.forEach((input) => { input.checked = input.value === (context.initialSeverity ?? 'media') })
+    proposalCategorySelect.value = context.initialCategory ?? CommentCategory.SOLID
+    proposalDecisionSelect.value = context.initialDecision ?? ProposalDecision.PENDING
+    proposalSeverityInputs.forEach((input) => { input.checked = input.value === (context.initialSeverity ?? CommentSeverity.MEDIUM) })
     proposalGlobalCheckbox.checked = false
     proposalGlobalToggle.style.display = context.allowGlobalToggle ? 'flex' : 'none'
     if (context.editId) {
@@ -268,7 +302,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   document.querySelectorAll<HTMLElement>('.code-line').forEach((lineElement) => lineElement.addEventListener('contextmenu', (event) => {
     event.preventDefault()
     const lineNumber = Number(lineElement.dataset.line)
-    openProposalDialog({ path: activeFile.path, line: lineNumber, allowGlobalToggle: false, initialAuthor: t('domain.authors.localReviewer'), initialCategory: 'solid', initialDecision: 'pendiente' })
+    openProposalDialog({ path: activeFile.path, line: lineNumber, allowGlobalToggle: false, initialAuthor: t('domain.authors.localReviewer'), initialCategory: CommentCategory.SOLID, initialDecision: ProposalDecision.PENDING })
   }))
   proposalForm.addEventListener('submit', async (event) => {
     event.preventDefault()
@@ -277,9 +311,9 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     if (!review.id) return
     const message = proposalMessage.value.trim()
     if (!message) return
-    const severity = (Array.from(proposalSeverityInputs).find((input) => input.checked)?.value ?? 'media') as 'baja' | 'media' | 'alta'
-    const category = (proposalCategorySelect.value || 'solid') as 'solid' | 'security' | 'quality'
-    const decision = (proposalDecisionSelect.value || 'pendiente') as 'pendiente' | 'deseable' | 'importante' | 'bloqueante'
+    const severity = (Array.from(proposalSeverityInputs).find((input) => input.checked)?.value ?? CommentSeverity.MEDIUM) as CommentSeverity
+    const category = (proposalCategorySelect.value || CommentCategory.SOLID) as CommentCategory
+    const decision = normalizeDecision(proposalDecisionSelect.value)
     if (proposalEditId) {
       await updateReviewComment(proposalEditId, { body: message, severity, category, decision })
     } else {
@@ -385,8 +419,8 @@ function renderSettings() {
   })
 }
 
-function render(filter: 'active' | 'closed' = 'active') {
-  if (currentScreen === 'settings') {
+function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
+  if (currentScreen === AppScreen.SETTINGS) {
     renderSettings()
     return
   }
@@ -395,7 +429,8 @@ function render(filter: 'active' | 'closed' = 'active') {
     void renderReviewWorkspace(selectedReview, currentWorkspaceFileIndex)
     return
   }
-  const visibleReviews = reviews.filter((review) => filter === 'closed' ? review.status === 'Cerrada' || review.status === 'Aprobada' : review.status !== 'Cerrada' && review.status !== 'Aprobada')
+  const isClosedReview = (review: Review) => review.status === ReviewStatusConst.CLOSED || review.status === ReviewStatusConst.APPROVED
+  const visibleReviews = reviews.filter((review) => filter === ReviewFilter.CLOSED ? isClosedReview(review) : !isClosedReview(review))
   const accessTokenField = hasRepositoryAccessToken()
     ? ''
     : `<label for="repository-token">${t('dialogs.connect.tokenLabel')}</label><input id="repository-token" name="repository-token" type="password" autocomplete="off" placeholder="${t('dialogs.connect.tokenPlaceholder')}" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><small class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.tokenHint')}</small>`
@@ -404,15 +439,15 @@ function render(filter: 'active' | 'closed' = 'active') {
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">${renderBrandLogoSvg(31, 'sidebar')}</span><span>CodeReview <b>AI</b></span></div>
         <div class="sidebar__section-label">${t('sidebar.workspace')}</div>
-        <nav class="main-nav" aria-label="${t('sidebar.workspace')}"><button class="nav-item nav-item--active" type="button"><span class="nav-icon">▦</span> ${t('sidebar.reviews')} <span class="nav-count">${reviews.filter((review) => review.status !== 'Cerrada' && review.status !== 'Aprobada').length}</span></button><button class="nav-item" type="button"><span class="nav-icon">◷</span> ${t('sidebar.history')}</button></nav>
+        <nav class="main-nav" aria-label="${t('sidebar.workspace')}"><button class="nav-item nav-item--active" type="button"><span class="nav-icon">▦</span> ${t('sidebar.reviews')} <span class="nav-count">${reviews.filter((review) => !isClosedReview(review)).length}</span></button><button class="nav-item" type="button"><span class="nav-icon">◷</span> ${t('sidebar.history')}</button></nav>
         <div class="sidebar__footer"><button class="nav-item" id="settings-nav" type="button"><span class="nav-icon">⚙</span> ${t('sidebar.settings')}</button><div class="session"><span class="avatar">AC</span><span><strong>${t('sidebar.localSession')}</strong><small>${t('sidebar.slmConnected')}</small></span><span class="session-dot"></span></div></div>
       </aside>
       <main class="content bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark">
         <header class="topbar"><div><span class="eyebrow">${t('reviews.eyebrow')}</span><h1>${t('reviews.title')}</h1></div><div class="flex items-center gap-2">${renderLangToggle('lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header>
         <section class="intro bg-brand-secondary-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="intro__lead"><span class="intro__emblem" aria-hidden="true">${renderBrandLogoSvg(46, 'hero')}</span><div><h2>${t('reviews.heroTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heroSubtitle')}</p></div></div><button class="primary-action" id="new-review" type="button"><span>+</span> ${t('reviews.newReview')}</button></section>
         <section class="stats" aria-label="${t('reviews.title')}"><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.inProgress')}</span><strong>${reviewKpis.activeReviews}</strong><span class="stat__detail stat__detail--positive">${t('reviews.stats.activeReviews')}</span></div><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.pendingSlm')}</span><strong>${reviewKpis.pendingSlmComments}</strong><span class="stat__detail text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.proposalsToReview')}</span></div><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.publishedComments')}</span><strong>${reviewKpis.publishedComments}</strong><span class="stat__detail stat__detail--positive">${t('reviews.stats.total')}</span></div></section>
-        <div class="section-heading"><div><h2>${filter === 'closed' ? t('reviews.heading.closedTitle') : t('reviews.heading.activeTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heading.registeredCount', { count: visibleReviews.length })}</p></div><div class="tabs" role="tablist"><button class="tab ${filter === 'active' ? 'tab--active' : ''}" data-filter="active" type="button">${t('reviews.tabs.active')}</button><button class="tab ${filter === 'closed' ? 'tab--active' : ''}" data-filter="closed" type="button">${t('reviews.tabs.closed')}</button></div></div>
-        <section class="review-list">${visibleReviews.length ? visibleReviews.map(reviewCard).join('') : `<div class="empty-state border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><strong>${filter === 'closed' ? t('reviews.empty.closedTitle') : t('reviews.empty.activeTitle')}</strong><span>${filter === 'closed' ? t('reviews.empty.closedText') : t('reviews.empty.activeText')}</span></div>`}</section>
+        <div class="section-heading"><div><h2>${filter === ReviewFilter.CLOSED ? t('reviews.heading.closedTitle') : t('reviews.heading.activeTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heading.registeredCount', { count: visibleReviews.length })}</p></div><div class="tabs" role="tablist"><button class="tab ${filter === ReviewFilter.ACTIVE ? 'tab--active' : ''}" data-filter="${ReviewFilter.ACTIVE}" type="button">${t('reviews.tabs.active')}</button><button class="tab ${filter === ReviewFilter.CLOSED ? 'tab--active' : ''}" data-filter="${ReviewFilter.CLOSED}" type="button">${t('reviews.tabs.closed')}</button></div></div>
+        <section class="review-list">${visibleReviews.length ? visibleReviews.map(reviewCard).join('') : `<div class="empty-state border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><strong>${filter === ReviewFilter.CLOSED ? t('reviews.empty.closedTitle') : t('reviews.empty.activeTitle')}</strong><span>${filter === ReviewFilter.CLOSED ? t('reviews.empty.closedText') : t('reviews.empty.activeText')}</span></div>`}</section>
         <footer class="content-footer text-brand-muted-light dark:!text-brand-muted-dark"><span><span class="live-dot"></span> ${t('reviews.footer.slmReady')}</span><span>${t('reviews.footer.localDataNotice')}</span></footer>
       </main>
     </div>
@@ -520,10 +555,10 @@ async function start() {
   window.addEventListener('hashchange', applyRoute)
   onReviewProgress(async () => {
     await refreshReviews()
-    if (currentScreen === 'reviews' && !selectedReviewId) render(currentFilter)
+    if (currentScreen === AppScreen.REVIEWS && !selectedReviewId) render(currentFilter)
   })
   onLanguageChange(() => {
-    if (currentScreen === 'settings') {
+    if (currentScreen === AppScreen.SETTINGS) {
       renderSettings()
     } else if (selectedReviewId) {
       const review = reviews.find((r) => r.id === selectedReviewId)

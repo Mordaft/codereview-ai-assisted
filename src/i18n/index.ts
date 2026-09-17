@@ -1,6 +1,16 @@
 import type { SupportedLanguage, TranslationDictionary } from './types'
 import { es } from './locales/es'
 import { en } from './locales/en'
+import {
+  CommentSource,
+  ProposalDecision,
+  ReviewStatus,
+  type CommentCategory as CommentCategoryType,
+  type CommentSeverity as CommentSeverityType,
+  type CommentSource as CommentSourceType,
+  type ProposalDecision as ProposalDecisionType,
+  type ReviewStatus as ReviewStatusType,
+} from '../enums'
 
 export type { SupportedLanguage, TranslationDictionary } from './types'
 
@@ -98,46 +108,48 @@ export function t(path: string, params?: Record<string, string | number>): strin
   })
 }
 
-export function tStatus(status: string): string {
+export function tStatus(status: ReviewStatusType | string): string {
   const dict = dictionaries[currentLanguage].domain.statuses
   switch (status) {
-    case 'En curso':
+    case ReviewStatus.IN_PROGRESS:
       return dict.inProgress
-    case 'En preparacion':
+    case ReviewStatus.IN_PREPARATION:
       return dict.inPreparation
-    case 'Cerrada':
+    case ReviewStatus.CLOSED:
       return dict.closed
-    case 'Aprobada':
+    case ReviewStatus.APPROVED:
       return dict.approved
+    case ReviewStatus.PENDING:
+      return dict.inPreparation
     default:
       return status
   }
 }
 
-export function tSeverity(severity?: string): string {
+export function tSeverity(severity?: CommentSeverityType | string): string {
   if (!severity) return dictionaries[currentLanguage].domain.severities.media
-  const key = severity.toLowerCase() as 'baja' | 'media' | 'alta'
+  const key = severity.toLowerCase() as CommentSeverityType
   const dict = dictionaries[currentLanguage].domain.severities
   return dict[key] ?? (severity.charAt(0).toUpperCase() + severity.slice(1))
 }
 
-export function tCategory(category?: string): string {
+export function tCategory(category?: CommentCategoryType | string): string {
   if (!category) return dictionaries[currentLanguage].domain.categories.solid
-  const key = category.toLowerCase() as 'solid' | 'security' | 'quality'
+  const key = category.toLowerCase() as CommentCategoryType
   const dict = dictionaries[currentLanguage].domain.categories
   return dict[key] ?? (category.charAt(0).toUpperCase() + category.slice(1))
 }
 
-export function tDecision(decision?: string): string {
+export function tDecision(decision?: ProposalDecisionType | string): string {
   const dict = dictionaries[currentLanguage].domain.decisions
   switch (decision?.toLowerCase()) {
-    case 'deseable':
+    case ProposalDecision.DESIRABLE:
       return dict.deseable
-    case 'importante':
+    case ProposalDecision.IMPORTANT:
       return dict.importante
-    case 'bloqueante':
+    case ProposalDecision.BLOCKING:
       return dict.bloqueante
-    case 'pendiente':
+    case ProposalDecision.PENDING:
     case 'pending':
     case 'edited':
     default:
@@ -145,7 +157,7 @@ export function tDecision(decision?: string): string {
   }
 }
 
-export function tAuthor(author?: string, source?: string): string {
+export function tAuthor(author?: string, source?: CommentSourceType | string): string {
   const dict = dictionaries[currentLanguage].domain.authors
   if (author) {
     if (author === 'SLM local') return dict.localSlm
@@ -154,9 +166,9 @@ export function tAuthor(author?: string, source?: string): string {
     if (author === 'Revisor') return dict.reviewer
     return author
   }
-  if (source === 'slm') return dict.localSlm
-  if (source === 'human') return dict.localReviewer
-  if (source === 'remote') return dict.remoteReviewer
+  if (source === CommentSource.SLM) return dict.localSlm
+  if (source === CommentSource.HUMAN) return dict.localReviewer
+  if (source === CommentSource.REMOTE) return dict.remoteReviewer
   return dict.reviewer
 }
 

@@ -14,6 +14,12 @@ import {
   tAuthor,
   formatRelativeTime,
 } from '../src/i18n/index'
+import {
+  CommentCategory,
+  CommentSeverity,
+  ProposalDecision,
+  ReviewStatus,
+} from '../src/enums'
 
 console.log('--- Iniciando pruebas de Internacionalización (i18n) ---')
 
@@ -89,33 +95,33 @@ function extractKeys(obj: Record<string, unknown>, prefix = ''): string[] {
   console.log('✓ Caso 3 superado: toggleLanguage y listeners reactivos funcionan correctamente')
 }
 
-// Test 4: Helpers de dominio en ES y EN
+// Test 4: Helpers de dominio en ES y EN con constantes canónicas y valores legados
 {
   setLanguage('es')
-  assert.equal(tStatus('En curso'), 'En curso')
-  assert.equal(tStatus('En preparacion'), 'En preparación')
-  assert.equal(tStatus('Cerrada'), 'Cerrada')
-  assert.equal(tStatus('Aprobada'), 'Aprobada')
+  assert.equal(tStatus(ReviewStatus.IN_PROGRESS), 'En curso')
+  assert.equal(tStatus(ReviewStatus.IN_PREPARATION), 'En preparación')
+  assert.equal(tStatus(ReviewStatus.CLOSED), 'Cerrada')
+  assert.equal(tStatus(ReviewStatus.APPROVED), 'Aprobada')
 
-  assert.equal(tSeverity('alta'), 'Alta')
-  assert.equal(tSeverity('baja'), 'Baja')
-  assert.equal(tCategory('security'), 'Seguridad')
-  assert.equal(tDecision('bloqueante'), 'Bloqueante')
+  assert.equal(tSeverity(CommentSeverity.HIGH), 'Alta')
+  assert.equal(tSeverity(CommentSeverity.LOW), 'Baja')
+  assert.equal(tCategory(CommentCategory.SECURITY), 'Seguridad')
+  assert.equal(tDecision(ProposalDecision.BLOCKING), 'Bloqueante')
   assert.equal(tAuthor('SLM local'), 'SLM local')
 
   setLanguage('en')
-  assert.equal(tStatus('En curso'), 'In progress')
-  assert.equal(tStatus('En preparacion'), 'In preparation')
-  assert.equal(tStatus('Cerrada'), 'Closed')
-  assert.equal(tStatus('Aprobada'), 'Approved')
+  assert.equal(tStatus(ReviewStatus.IN_PROGRESS), 'In progress')
+  assert.equal(tStatus(ReviewStatus.IN_PREPARATION), 'In preparation')
+  assert.equal(tStatus(ReviewStatus.CLOSED), 'Closed')
+  assert.equal(tStatus(ReviewStatus.APPROVED), 'Approved')
 
-  assert.equal(tSeverity('alta'), 'High')
-  assert.equal(tSeverity('baja'), 'Low')
-  assert.equal(tCategory('security'), 'Security')
-  assert.equal(tDecision('bloqueante'), 'Blocking')
+  assert.equal(tSeverity(CommentSeverity.HIGH), 'High')
+  assert.equal(tSeverity(CommentSeverity.LOW), 'Low')
+  assert.equal(tCategory(CommentCategory.SECURITY), 'Security')
+  assert.equal(tDecision(ProposalDecision.BLOCKING), 'Blocking')
   assert.equal(tAuthor('SLM local'), 'Local SLM')
 
-  console.log('✓ Caso 4 superado: Helpers de dominio tStatus, tSeverity, tCategory, tDecision, tAuthor')
+  console.log('✓ Caso 4 superado: Helpers de dominio tStatus, tSeverity, tCategory, tDecision, tAuthor con constantes canónicas')
 }
 
 // Test 5: Fallback seguro para claves desconocidas

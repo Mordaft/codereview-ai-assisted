@@ -2,13 +2,14 @@ import { getSlmConfig } from './slm-config'
 import { getReviewPromptConfig, reviewOutputContract } from './review-prompts'
 import type { StoredReviewFile } from './review-db'
 import { trace } from './diagnostics'
+import { CommentCategory, CommentSeverity } from './enums'
 
 export interface SlmSuggestion {
   id: string
   filePath: string
   line: number
-  severity: 'baja' | 'media' | 'alta'
-  category: 'solid' | 'security' | 'quality'
+  severity: CommentSeverity
+  category: CommentCategory
   message: string
   recommendation: string
 }
@@ -26,12 +27,25 @@ interface ChatCompletionChunk {
   }>
 }
 
+const validSeverities = new Set<string>(Object.values(CommentSeverity))
+const validCategories = new Set<string>(Object.values(CommentCategory))
+
 function normalizeSuggestions(items: unknown[]): SlmSuggestion[] {
   return items.flatMap((item): SlmSuggestion[] => {
     if (!item || typeof item !== 'object') return []
     const suggestion = item as Partial<SlmSuggestion>
     const line = typeof suggestion.line === 'string' ? Number(suggestion.line) : suggestion.line
-    if (typeof suggestion.id !== 'string' || typeof suggestion.filePath !== 'string' || typeof line !== 'number' || !Number.isInteger(line) || line <= 0 || !['baja', 'media', 'alta'].includes(suggestion.severity ?? '') || !['solid', 'security', 'quality'].includes(suggestion.category ?? '') || typeof suggestion.message !== 'string' || typeof suggestion.recommendation !== 'string') return []
+    if (
+      typeof suggestion.id !== 'string' ||
+      typeof suggestion.filePath !== 'string' ||
+      typeof line !== 'number' ||
+      !Number.isInteger(line) ||
+      line <= 0 ||
+      !validSeverities.has(suggestion.severity ?? '') ||
+      !validCategories.has(suggestion.category ?? '') ||
+      typeof suggestion.message !== 'string' ||
+      typeof suggestion.recommendation !== 'string'
+    ) return []
     return [{ ...suggestion, line } as SlmSuggestion]
   })
 }

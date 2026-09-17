@@ -2,6 +2,8 @@ import type { SupportedLanguage, TranslationDictionary } from './types'
 import { es } from './locales/es'
 import { en } from './locales/en'
 import {
+  CommentCategory,
+  CommentSeverity,
   CommentSource,
   ProposalDecision,
   ReviewStatus,
@@ -108,67 +110,110 @@ export function t(path: string, params?: Record<string, string | number>): strin
   })
 }
 
-export function tStatus(status: ReviewStatusType | string): string {
+export function tStatus(status: ReviewStatusType | number | string): string {
   const dict = dictionaries[currentLanguage].domain.statuses
   switch (status) {
     case ReviewStatus.IN_PROGRESS:
+    case 'En curso':
+    case 'inProgress':
       return dict.inProgress
     case ReviewStatus.IN_PREPARATION:
+    case 'En preparacion':
+    case 'inPreparation':
       return dict.inPreparation
     case ReviewStatus.CLOSED:
+    case 'Cerrada':
+    case 'closed':
       return dict.closed
     case ReviewStatus.APPROVED:
+    case 'Aprobada':
+    case 'approved':
       return dict.approved
     case ReviewStatus.PENDING:
+    case 'Pendiente':
+    case 'pending':
       return dict.inPreparation
     default:
-      return status
+      return String(status)
   }
 }
 
-export function tSeverity(severity?: CommentSeverityType | string): string {
-  if (!severity) return dictionaries[currentLanguage].domain.severities.media
-  const key = severity.toLowerCase() as CommentSeverityType
+export function tSeverity(severity?: CommentSeverityType | number | string): string {
   const dict = dictionaries[currentLanguage].domain.severities
-  return dict[key] ?? (severity.charAt(0).toUpperCase() + severity.slice(1))
+  if (severity === undefined || severity === null) return dict.medium
+  switch (severity) {
+    case CommentSeverity.LOW:
+    case 'baja':
+    case 'low':
+      return dict.low
+    case CommentSeverity.HIGH:
+    case 'alta':
+    case 'high':
+      return dict.high
+    case CommentSeverity.MEDIUM:
+    case 'media':
+    case 'medium':
+    default:
+      return dict.medium
+  }
 }
 
-export function tCategory(category?: CommentCategoryType | string): string {
-  if (!category) return dictionaries[currentLanguage].domain.categories.solid
-  const key = category.toLowerCase() as CommentCategoryType
+export function tCategory(category?: CommentCategoryType | number | string): string {
   const dict = dictionaries[currentLanguage].domain.categories
-  return dict[key] ?? (category.charAt(0).toUpperCase() + category.slice(1))
+  if (category === undefined || category === null) return dict.solid
+  switch (category) {
+    case CommentCategory.SOLID:
+    case 'solid':
+      return dict.solid
+    case CommentCategory.SECURITY:
+    case 'security':
+    case 'seguridad':
+      return dict.security
+    case CommentCategory.QUALITY:
+    case 'quality':
+    case 'calidad':
+      return dict.quality
+    default:
+      return dict.solid
+  }
 }
 
-export function tDecision(decision?: ProposalDecisionType | string): string {
+export function tDecision(decision?: ProposalDecisionType | number | string): string {
   const dict = dictionaries[currentLanguage].domain.decisions
-  switch (decision?.toLowerCase()) {
+  switch (decision) {
     case ProposalDecision.DESIRABLE:
-      return dict.deseable
+    case 'deseable':
+    case 'desirable':
+      return dict.desirable
     case ProposalDecision.IMPORTANT:
-      return dict.importante
+    case 'importante':
+    case 'important':
+      return dict.important
     case ProposalDecision.BLOCKING:
-      return dict.bloqueante
+    case 'bloqueante':
+    case 'blocking':
+      return dict.blocking
     case ProposalDecision.PENDING:
+    case 'pendiente':
     case 'pending':
     case 'edited':
     default:
-      return dict.pendiente
+      return dict.pending
   }
 }
 
-export function tAuthor(author?: string, source?: CommentSourceType | string): string {
+export function tAuthor(author?: string, source?: CommentSourceType | number | string): string {
   const dict = dictionaries[currentLanguage].domain.authors
   if (author) {
-    if (author === 'SLM local') return dict.localSlm
-    if (author === 'Revisor local') return dict.localReviewer
-    if (author === 'Revisor remoto') return dict.remoteReviewer
-    if (author === 'Revisor') return dict.reviewer
+    if (author === 'SLM local' || author === 'Local SLM') return dict.localSlm
+    if (author === 'Revisor local' || author === 'Local reviewer') return dict.localReviewer
+    if (author === 'Revisor remoto' || author === 'Remote reviewer') return dict.remoteReviewer
+    if (author === 'Revisor' || author === 'Reviewer') return dict.reviewer
     return author
   }
-  if (source === CommentSource.SLM) return dict.localSlm
-  if (source === CommentSource.HUMAN) return dict.localReviewer
-  if (source === CommentSource.REMOTE) return dict.remoteReviewer
+  if (source === CommentSource.SLM || source === 'slm') return dict.localSlm
+  if (source === CommentSource.HUMAN || source === 'human') return dict.localReviewer
+  if (source === CommentSource.REMOTE || source === 'remote') return dict.remoteReviewer
   return dict.reviewer
 }
 

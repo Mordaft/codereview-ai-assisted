@@ -27,26 +27,64 @@ interface ChatCompletionChunk {
   }>
 }
 
-const validSeverities = new Set<string>(Object.values(CommentSeverity))
-const validCategories = new Set<string>(Object.values(CommentCategory))
+function parseSeverity(val: unknown): CommentSeverity | undefined {
+  if (typeof val === 'number') {
+    if (val === CommentSeverity.LOW || val === CommentSeverity.MEDIUM || val === CommentSeverity.HIGH) {
+      return val
+    }
+  }
+  if (typeof val === 'string') {
+    const s = val.toLowerCase().trim()
+    if (s === 'baja' || s === 'low' || s === '1') return CommentSeverity.LOW
+    if (s === 'media' || s === 'medium' || s === '2') return CommentSeverity.MEDIUM
+    if (s === 'alta' || s === 'high' || s === '3') return CommentSeverity.HIGH
+  }
+  return undefined
+}
+
+function parseCategory(val: unknown): CommentCategory | undefined {
+  if (typeof val === 'number') {
+    if (val === CommentCategory.SOLID || val === CommentCategory.SECURITY || val === CommentCategory.QUALITY) {
+      return val
+    }
+  }
+  if (typeof val === 'string') {
+    const c = val.toLowerCase().trim()
+    if (c === 'solid' || c === '1') return CommentCategory.SOLID
+    if (c === 'security' || c === 'seguridad' || c === '2') return CommentCategory.SECURITY
+    if (c === 'quality' || c === 'calidad' || c === '3') return CommentCategory.QUALITY
+  }
+  return undefined
+}
 
 function normalizeSuggestions(items: unknown[]): SlmSuggestion[] {
   return items.flatMap((item): SlmSuggestion[] => {
     if (!item || typeof item !== 'object') return []
-    const suggestion = item as Partial<SlmSuggestion>
-    const line = typeof suggestion.line === 'string' ? Number(suggestion.line) : suggestion.line
+    const raw = item as Record<string, unknown>
+    const line = typeof raw.line === 'string' ? Number(raw.line) : raw.line
+    const severity = parseSeverity(raw.severity)
+    const category = parseCategory(raw.category)
+
     if (
-      typeof suggestion.id !== 'string' ||
-      typeof suggestion.filePath !== 'string' ||
+      typeof raw.id !== 'string' ||
+      typeof raw.filePath !== 'string' ||
       typeof line !== 'number' ||
       !Number.isInteger(line) ||
       line <= 0 ||
-      !validSeverities.has(suggestion.severity ?? '') ||
-      !validCategories.has(suggestion.category ?? '') ||
-      typeof suggestion.message !== 'string' ||
-      typeof suggestion.recommendation !== 'string'
+      severity === undefined ||
+      category === undefined ||
+      typeof raw.message !== 'string' ||
+      typeof raw.recommendation !== 'string'
     ) return []
-    return [{ ...suggestion, line } as SlmSuggestion]
+    return [{
+      id: raw.id,
+      filePath: raw.filePath,
+      line,
+      severity,
+      category,
+      message: raw.message,
+      recommendation: raw.recommendation,
+    }]
   })
 }
 

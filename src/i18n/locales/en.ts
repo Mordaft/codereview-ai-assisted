@@ -170,9 +170,9 @@ export const en: TranslationDictionary = {
       approved: 'Approved',
     },
     severities: {
-      baja: 'Low',
-      media: 'Medium',
-      alta: 'High',
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
     },
     categories: {
       solid: 'SOLID',
@@ -180,10 +180,10 @@ export const en: TranslationDictionary = {
       quality: 'Quality',
     },
     decisions: {
-      pendiente: 'Pending',
-      deseable: 'Desirable',
-      importante: 'Important',
-      bloqueante: 'Blocking',
+      pending: 'Pending',
+      desirable: 'Desirable',
+      important: 'Important',
+      blocking: 'Blocking',
     },
     authors: {
       localSlm: 'Local SLM',

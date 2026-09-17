@@ -3,7 +3,7 @@ import { parseReviewUrl } from './platform-url'
 import type { RemoteChange, RemoteComment, RemoteFile } from './platform-api'
 import { trace } from './diagnostics'
 import {
-  type CommentCategory,
+  CommentCategory,
   type CommentDecision,
   CommentLifecycle,
   type CommentSeverity,
@@ -100,11 +100,11 @@ export async function listReviews() {
 
 export async function getReviewKpis() {
   const [activeReviews, allComments] = await Promise.all([
-    database.reviews.where('status').equals(ReviewStatusConst.IN_PROGRESS).count(),
+    database.reviews.where('status').anyOf([ReviewStatusConst.IN_PROGRESS, 'En curso' as unknown as ReviewStatus]).count(),
     database.reviewComments.toArray(),
   ])
-  const pendingSlmComments = allComments.filter((comment) => comment.source === CommentSourceConst.SLM && comment.decision !== CommentLifecycle.PUBLISHED).length
-  const publishedComments = allComments.filter((comment) => comment.decision === CommentLifecycle.PUBLISHED).length
+  const pendingSlmComments = allComments.filter((comment) => (comment.source === CommentSourceConst.SLM || comment.source === ('slm' as unknown)) && comment.decision !== CommentLifecycle.PUBLISHED && comment.decision !== ('published' as unknown)).length
+  const publishedComments = allComments.filter((comment) => comment.decision === CommentLifecycle.PUBLISHED || comment.decision === ('published' as unknown)).length
   return { activeReviews, pendingSlmComments, publishedComments }
 }
 
@@ -239,7 +239,7 @@ export async function addManualReviewComment(reviewId: number, input: {
       createdAt: new Date().toISOString(),
       source: CommentSourceConst.HUMAN,
       decision: input.decision ?? ProposalDecision.PENDING,
-      category: input.category ?? 'solid',
+      category: input.category ?? CommentCategory.SOLID,
       severity: input.severity ?? CommentSeverityConst.MEDIUM,
     })
     const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()

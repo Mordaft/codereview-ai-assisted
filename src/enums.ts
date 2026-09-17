@@ -5,57 +5,57 @@
  */
 
 export const ReviewStatus = {
-  IN_PREPARATION: 'En preparacion',
-  IN_PROGRESS: 'En curso',
-  APPROVED: 'Aprobada',
-  CLOSED: 'Cerrada',
-  PENDING: 'Pendiente',
+  IN_PREPARATION: 0,
+  IN_PROGRESS: 1,
+  APPROVED: 2,
+  CLOSED: 3,
+  PENDING: 4,
 } as const
 export type ReviewStatus = (typeof ReviewStatus)[keyof typeof ReviewStatus]
 
 export const CommentSeverity = {
-  LOW: 'baja',
-  MEDIUM: 'media',
-  HIGH: 'alta',
+  LOW: 1,
+  MEDIUM: 2,
+  HIGH: 3,
 } as const
 export type CommentSeverity = (typeof CommentSeverity)[keyof typeof CommentSeverity]
 
 export const CommentCategory = {
-  SOLID: 'solid',
-  SECURITY: 'security',
-  QUALITY: 'quality',
+  SOLID: 1,
+  SECURITY: 2,
+  QUALITY: 3,
 } as const
 export type CommentCategory = (typeof CommentCategory)[keyof typeof CommentCategory]
 
 export const ProposalDecision = {
-  PENDING: 'pendiente',
-  DESIRABLE: 'deseable',
-  IMPORTANT: 'importante',
-  BLOCKING: 'bloqueante',
+  PENDING: 0,
+  DESIRABLE: 1,
+  IMPORTANT: 2,
+  BLOCKING: 3,
 } as const
 export type ProposalDecision = (typeof ProposalDecision)[keyof typeof ProposalDecision]
 
 export const CommentLifecycle = {
-  PUBLISHED: 'published',
-  EDITED: 'edited',
-  DELETED: 'deleted',
+  PUBLISHED: 10,
+  EDITED: 11,
+  DELETED: 12,
 } as const
 export type CommentLifecycle = (typeof CommentLifecycle)[keyof typeof CommentLifecycle]
 
 export type CommentDecision = ProposalDecision | CommentLifecycle
 
 export const CommentSource = {
-  REMOTE: 'remote',
-  SLM: 'slm',
-  HUMAN: 'human',
+  REMOTE: 1,
+  SLM: 2,
+  HUMAN: 3,
 } as const
 export type CommentSource = (typeof CommentSource)[keyof typeof CommentSource]
 
 export const ReviewAction = {
-  APPROVE: 'approve',
-  CLOSE: 'close',
-  REOPEN: 'reopen',
-  CONTINUE: 'continue',
+  APPROVE: 1,
+  CLOSE: 2,
+  REOPEN: 3,
+  CONTINUE: 4,
 } as const
 export type ReviewAction = (typeof ReviewAction)[keyof typeof ReviewAction]
 export type HumanReviewDecision = ReviewAction

@@ -87,29 +87,85 @@ function renderLangToggle(id: string) {
   return `<button class="lang-toggle bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark font-bold text-xs" id="${id}" type="button" aria-label="${toggleLabel}" title="${toggleLabel}">${currentLang.toUpperCase()}</button>`
 }
 
-function statusClass(status: ReviewStatus) {
-  return status.toLowerCase().replaceAll(' ', '-')
+function statusClass(status: ReviewStatus | number | string) {
+  switch (status) {
+    case ReviewStatusConst.IN_PREPARATION:
+    case 'En preparacion':
+    case 'inPreparation':
+      return 'en-preparacion'
+    case ReviewStatusConst.CLOSED:
+    case 'Cerrada':
+    case 'closed':
+      return 'cerrada'
+    case ReviewStatusConst.APPROVED:
+    case 'Aprobada':
+    case 'approved':
+      return 'aprobada'
+    case ReviewStatusConst.IN_PROGRESS:
+    case 'En curso':
+    case 'inProgress':
+    default:
+      return 'en-curso'
+  }
+}
+
+function severityClass(severity?: CommentSeverity | number | string) {
+  switch (severity) {
+    case CommentSeverity.HIGH:
+    case 'alta':
+    case 'high':
+      return 'alta'
+    case CommentSeverity.LOW:
+    case 'baja':
+    case 'low':
+      return 'baja'
+    case CommentSeverity.MEDIUM:
+    case 'media':
+    case 'medium':
+    default:
+      return 'media'
+  }
 }
 
 function renderBrandLogoSvg(size = 32, idPrefix = 'brand') {
   return `<svg class="brand-logo" width="${size}" height="${size}" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="${idPrefix}NeuralGrad" x1="8" y1="36" x2="40" y2="10" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#87b743"/><stop offset="60%" stop-color="#c4f36b"/><stop offset="100%" stop-color="#e3ff99"/></linearGradient><filter id="${idPrefix}NeonGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.2" result="blur"/><feComposite in="SourceGraphic" in2="blur" operator="over"/></filter></defs><rect width="48" height="48" rx="12" fill="#17211f"/><path d="M8 26H16" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="26" r="2.6" fill="#17211f" stroke="#c4f36b" stroke-width="2"/><path d="M16 26C18 18 21 17 25 17H28" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.3" stroke-linecap="round"/><circle cx="28" cy="17" r="2.3" fill="#17211f" stroke="#c4f36b" stroke-width="1.8"/><path d="M16 26C18 34 21 35 25 35H28" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="2.3" stroke-linecap="round"/><circle cx="28" cy="35" r="2.3" fill="#17211f" stroke="#c4f36b" stroke-width="1.8"/><path d="M22 26L26.5 31C27.4 32 28.8 31.4 29.5 30.3L37.5 15" stroke="url(#${idPrefix}NeuralGrad)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#${idPrefix}NeonGlow)"/><path d="M38.5 7.5C38.5 9.8 37 11.2 34.8 11.2C37 11.2 38.5 12.6 38.5 14.9C38.5 12.6 40 11.2 42.2 11.2C40 11.2 38.5 9.8 38.5 7.5Z" fill="#c4f36b" filter="url(#${idPrefix}NeonGlow)"/></svg>`
 }
 
-function normalizeDecision(decision?: string): ProposalDecision {
-  if (!decision) return ProposalDecision.PENDING
-  switch (decision.toLowerCase()) {
-    case ProposalDecision.DESIRABLE:
-      return ProposalDecision.DESIRABLE
-    case ProposalDecision.IMPORTANT:
-      return ProposalDecision.IMPORTANT
-    case ProposalDecision.BLOCKING:
-      return ProposalDecision.BLOCKING
-    case ProposalDecision.PENDING:
-    case 'pending':
-    case 'edited':
-    default:
-      return ProposalDecision.PENDING
+function normalizeDecision(decision?: unknown): ProposalDecision {
+  if (decision === undefined || decision === null) return ProposalDecision.PENDING
+  if (typeof decision === 'number') {
+    if (
+      decision === ProposalDecision.DESIRABLE ||
+      decision === ProposalDecision.IMPORTANT ||
+      decision === ProposalDecision.BLOCKING ||
+      decision === ProposalDecision.PENDING
+    ) {
+      return decision
+    }
   }
+  if (typeof decision === 'string') {
+    switch (decision.toLowerCase().trim()) {
+      case '1':
+      case 'deseable':
+      case 'desirable':
+        return ProposalDecision.DESIRABLE
+      case '2':
+      case 'importante':
+      case 'important':
+        return ProposalDecision.IMPORTANT
+      case '3':
+      case 'bloqueante':
+      case 'blocking':
+        return ProposalDecision.BLOCKING
+      case '0':
+      case 'pendiente':
+      case 'pending':
+      case 'edited':
+      default:
+        return ProposalDecision.PENDING
+    }
+  }
+  return ProposalDecision.PENDING
 }
 
 async function publishPendingComments(review: Review) {
@@ -140,7 +196,7 @@ function reviewCard(review: Review) {
 
 async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   currentWorkspaceFileIndex = activeFileIndex
-  const isReviewLocked = review.status === ReviewStatusConst.APPROVED || review.status === ReviewStatusConst.CLOSED
+  const isReviewLocked = review.status === ReviewStatusConst.APPROVED || review.status === ReviewStatusConst.CLOSED || (review.status as unknown) === 'Aprobada' || (review.status as unknown) === 'Cerrada'
   const storedComments = review.id ? await listReviewComments(review.id) : []
   const workspaceFiles = review.remoteFiles?.length ? review.remoteFiles.map((file) => ({ path: file.path, type: file.path.split('.').at(-1)?.toUpperCase() ?? 'TXT', lines: (file.content ?? file.patch ?? t('workspace.noFilesDownloadedText')).split('\n') })) : [{ path: t('workspace.noFilesDownloaded'), type: 'TXT', lines: [t('workspace.noFilesDownloadedText')] }]
   const workspaceComments = storedComments.length ? storedComments.map((comment) => ({
@@ -176,14 +232,14 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions"><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
     const fileComments = fileCommentsMap.get(file.path) ?? []
     const commentCount = fileComments.length
-    const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH)
+    const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH || (comment.severity as unknown) === 'alta')
     const badgeClass = hasHighSeverity ? 'comment-badge comment-badge--alta' : 'comment-badge'
     const badgeLabel = t('workspace.reviewProposalBadge', {
       count: commentCount,
       label: commentCount === 1 ? t('workspace.proposalWordSingular') : t('workspace.proposalWordPlural'),
     })
     return `<button class="file-item text-brand-muted-light dark:!text-brand-muted-dark ${index === activeFileIndex ? 'file-item--active dark:!bg-[#2e3e37] dark:!text-brand-primary-dark' : 'hover:dark:!bg-[#263730]'}" data-file-index="${index}" type="button"><span class="file-type">${file.type}</span><span class="file-name" title="${file.path}">${file.path}</span>${commentCount > 0 ? `<span class="${badgeClass}" title="${badgeLabel}" aria-label="${badgeLabel}"><svg class="comment-badge__icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12h2.5v2.793a.5.5 0 0 0 .854.353L8.707 12H13.5a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 2h-11z"/></svg><span class="comment-badge__count">${commentCount}</span></span>` : ''}</button>`
-  }).join('')}<div class="tree-summary border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><span class="live-dot"></span> ${t('workspace.commentsCount', { count: workspaceComments.length })}</div></aside><main class="code-review-panel bg-[#fbfcfb] dark:!bg-brand-canvas-dark"><div class="code-toolbar bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><strong id="active-file-path" class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFile.path}</strong><span class="text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.diffView', { lines: activeFile.lines.length })}</span></div><div class="code-toolbar__actions"><button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" id="new-file-proposal" type="button">${t('workspace.newProposal')}</button></div></div><div class="code-frame">${activeFile.lines.map((line, index) => { const lineNumber = index + 1; const comments = activeFileComments.filter((comment) => comment.line === lineNumber); return `<div class="code-line ${comments.length ? 'code-line--commented dark:!bg-[#352f19]' : ''}" data-line="${lineNumber}"><span class="line-number text-[#aab6ae] dark:!text-[#62776c]">${lineNumber}</span><code class="text-[#30433a] dark:!text-[#d6e2db]">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</code>${comments.length ? `<span class="line-marker" title="${t('workspace.lineCommentsMarker', { count: comments.length })}">●</span>` : ''}</div>` }).join('')}</div></main><aside class="comments-panel bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="comments-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><span class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.commentsPanelTitle')}</span><h2 class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFileComments.length === 1 ? t('workspace.singleProposalCount') : t('workspace.proposalsCount', { count: activeFileComments.length })}</h2><small class="comments-file text-brand-muted-light dark:!text-brand-muted-dark">${activeFile.path}</small></div></div>${activeFileComments.length ? activeFileComments.map((comment) => `<article class="review-comment bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark" data-comment-id="${comment.id ?? ''}"><div class="comment-meta text-brand-muted-light dark:!text-brand-muted-dark"><span class="severity severity--${comment.severity}">${tSeverity(comment.severity)}</span><span>${comment.file ? `${comment.file}${comment.line ? ':' + comment.line : ''}` : t('workspace.globalProposal')}</span></div><p class="text-brand-primary-light dark:!text-brand-primary-dark">${comment.message}</p><small class="text-brand-muted-light dark:!text-brand-muted-dark">${comment.author} · ${tCategory(comment.category)} · ${tDecision(comment.decision)}</small>${comment.id && !isReviewLocked ? `<div class="comment-actions"><button class="comment-action comment-action--edit bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.edit')}</button><button class="comment-action comment-action--delete bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.delete')}</button></div>` : ''}</article>`).join('') : `<div class="comments-empty text-brand-muted-light dark:!text-brand-muted-dark dark:!border-brand-line-dark">${t('workspace.emptyComments')}</div>`}</aside></div></div>
+  }).join('')}<div class="tree-summary border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><span class="live-dot"></span> ${t('workspace.commentsCount', { count: workspaceComments.length })}</div></aside><main class="code-review-panel bg-[#fbfcfb] dark:!bg-brand-canvas-dark"><div class="code-toolbar bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><strong id="active-file-path" class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFile.path}</strong><span class="text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.diffView', { lines: activeFile.lines.length })}</span></div><div class="code-toolbar__actions"><button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" id="new-file-proposal" type="button">${t('workspace.newProposal')}</button></div></div><div class="code-frame">${activeFile.lines.map((line, index) => { const lineNumber = index + 1; const comments = activeFileComments.filter((comment) => comment.line === lineNumber); return `<div class="code-line ${comments.length ? 'code-line--commented dark:!bg-[#352f19]' : ''}" data-line="${lineNumber}"><span class="line-number text-[#aab6ae] dark:!text-[#62776c]">${lineNumber}</span><code class="text-[#30433a] dark:!text-[#d6e2db]">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</code>${comments.length ? `<span class="line-marker" title="${t('workspace.lineCommentsMarker', { count: comments.length })}">●</span>` : ''}</div>` }).join('')}</div></main><aside class="comments-panel bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="comments-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div><span class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.commentsPanelTitle')}</span><h2 class="text-brand-primary-light dark:!text-brand-primary-dark">${activeFileComments.length === 1 ? t('workspace.singleProposalCount') : t('workspace.proposalsCount', { count: activeFileComments.length })}</h2><small class="comments-file text-brand-muted-light dark:!text-brand-muted-dark">${activeFile.path}</small></div></div>${activeFileComments.length ? activeFileComments.map((comment) => `<article class="review-comment bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark" data-comment-id="${comment.id ?? ''}"><div class="comment-meta text-brand-muted-light dark:!text-brand-muted-dark"><span class="severity severity--${severityClass(comment.severity)}">${tSeverity(comment.severity)}</span><span>${comment.file ? `${comment.file}${comment.line ? ':' + comment.line : ''}` : t('workspace.globalProposal')}</span></div><p class="text-brand-primary-light dark:!text-brand-primary-dark">${comment.message}</p><small class="text-brand-muted-light dark:!text-brand-muted-dark">${comment.author} · ${tCategory(comment.category)} · ${tDecision(comment.decision)}</small>${comment.id && !isReviewLocked ? `<div class="comment-actions"><button class="comment-action comment-action--edit bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.edit')}</button><button class="comment-action comment-action--delete bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.delete')}</button></div>` : ''}</article>`).join('') : `<div class="comments-empty text-brand-muted-light dark:!text-brand-muted-dark dark:!border-brand-line-dark">${t('workspace.emptyComments')}</div>`}</aside></div></div>
     <dialog id="new-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-proposal-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.proposal.eyebrow')}</span><h2 id="new-proposal-title">${t('dialogs.proposal.addTitle')}</h2><p id="new-proposal-hint" class="text-brand-muted-light dark:!text-brand-muted-dark"></p><label for="proposal-message">${t('dialogs.proposal.descLabel')}</label><textarea id="proposal-message" name="proposal-message" rows="3" required placeholder="${t('dialogs.proposal.descPlaceholder')}" class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"></textarea><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-author">${t('dialogs.proposal.authorLabel')}</label><input id="proposal-author" name="proposal-author" type="text" readonly class="proposal-input proposal-input--readonly bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-muted-dark dark:!border-brand-line-dark"></div><div class="proposal-field"><label for="proposal-category">${t('dialogs.proposal.categoryLabel')}</label><select id="proposal-category" name="proposal-category" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="${CommentCategory.SOLID}">${tCategory(CommentCategory.SOLID)}</option><option value="${CommentCategory.SECURITY}">${tCategory(CommentCategory.SECURITY)}</option><option value="${CommentCategory.QUALITY}">${tCategory(CommentCategory.QUALITY)}</option></select></div></div><div class="proposal-form-grid"><div class="proposal-field"><label for="proposal-decision">${t('dialogs.proposal.decisionLabel')}</label><select id="proposal-decision" name="proposal-decision" class="proposal-select bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><option value="${ProposalDecision.PENDING}">${tDecision(ProposalDecision.PENDING)}</option><option value="${ProposalDecision.DESIRABLE}">${tDecision(ProposalDecision.DESIRABLE)}</option><option value="${ProposalDecision.IMPORTANT}">${tDecision(ProposalDecision.IMPORTANT)}</option><option value="${ProposalDecision.BLOCKING}">${tDecision(ProposalDecision.BLOCKING)}</option></select></div><div class="proposal-field"><span class="field-label">${t('dialogs.proposal.severityLabel')}</span><div class="severity-picker" id="proposal-severity-picker"><label class="severity-option severity-option--baja"><input type="radio" name="proposal-severity" value="${CommentSeverity.LOW}"><span>${tSeverity(CommentSeverity.LOW)}</span></label><label class="severity-option severity-option--media"><input type="radio" name="proposal-severity" value="${CommentSeverity.MEDIUM}" checked><span>${tSeverity(CommentSeverity.MEDIUM)}</span></label><label class="severity-option severity-option--alta"><input type="radio" name="proposal-severity" value="${CommentSeverity.HIGH}"><span>${tSeverity(CommentSeverity.HIGH)}</span></label></div></div></div><label class="proposal-global-toggle" id="proposal-global-toggle"><input type="checkbox" id="proposal-global" name="proposal-global"> ${t('dialogs.proposal.globalCheckbox')}</label><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action" id="save-proposal" value="default">${t('dialogs.proposal.saveProposal')}</button></div></form></dialog>
     <dialog id="delete-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="delete-proposal-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.delete.eyebrow')}</span><h2>${t('dialogs.delete.title')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.delete.warning')}</p><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action primary-action--danger" value="default">${t('dialogs.delete.confirmBtn')}</button></div></form></dialog>
   `
@@ -198,7 +254,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   }))
   document.querySelectorAll<HTMLButtonElement>('[data-decision]').forEach((button) => button.addEventListener('click', async () => {
     if (!review.id) return
-    const decision = button.dataset.decision as ReviewAction
+    const decision = Number(button.dataset.decision) as ReviewAction
     try {
       if (decision === ReviewAction.CLOSE || decision === ReviewAction.APPROVE) await publishPendingComments(review)
       const nextStatus = decision === ReviewAction.APPROVE
@@ -277,9 +333,9 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     proposalEditId = context.editId
     proposalMessage.value = context.initialMessage ?? ''
     proposalAuthorInput.value = context.initialAuthor ?? t('domain.authors.localReviewer')
-    proposalCategorySelect.value = context.initialCategory ?? CommentCategory.SOLID
-    proposalDecisionSelect.value = context.initialDecision ?? ProposalDecision.PENDING
-    proposalSeverityInputs.forEach((input) => { input.checked = input.value === (context.initialSeverity ?? CommentSeverity.MEDIUM) })
+    proposalCategorySelect.value = String(context.initialCategory ?? CommentCategory.SOLID)
+    proposalDecisionSelect.value = String(context.initialDecision ?? ProposalDecision.PENDING)
+    proposalSeverityInputs.forEach((input) => { input.checked = Number(input.value) === (context.initialSeverity ?? CommentSeverity.MEDIUM) })
     proposalGlobalCheckbox.checked = false
     proposalGlobalToggle.style.display = context.allowGlobalToggle ? 'flex' : 'none'
     if (context.editId) {
@@ -298,7 +354,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     proposalDialog.showModal()
   }
 
-  document.querySelector('#new-file-proposal')?.addEventListener('click', () => openProposalDialog({ path: activeFile.path, allowGlobalToggle: true, initialAuthor: t('domain.authors.localReviewer'), initialCategory: 'solid', initialDecision: 'pendiente' }))
+  document.querySelector('#new-file-proposal')?.addEventListener('click', () => openProposalDialog({ path: activeFile.path, allowGlobalToggle: true, initialAuthor: t('domain.authors.localReviewer'), initialCategory: CommentCategory.SOLID, initialDecision: ProposalDecision.PENDING }))
   document.querySelectorAll<HTMLElement>('.code-line').forEach((lineElement) => lineElement.addEventListener('contextmenu', (event) => {
     event.preventDefault()
     const lineNumber = Number(lineElement.dataset.line)
@@ -311,8 +367,9 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     if (!review.id) return
     const message = proposalMessage.value.trim()
     if (!message) return
-    const severity = (Array.from(proposalSeverityInputs).find((input) => input.checked)?.value ?? CommentSeverity.MEDIUM) as CommentSeverity
-    const category = (proposalCategorySelect.value || CommentCategory.SOLID) as CommentCategory
+    const selectedSeverityInput = Array.from(proposalSeverityInputs).find((input) => input.checked)
+    const severity = (selectedSeverityInput ? Number(selectedSeverityInput.value) : CommentSeverity.MEDIUM) as CommentSeverity
+    const category = (proposalCategorySelect.value ? Number(proposalCategorySelect.value) : CommentCategory.SOLID) as CommentCategory
     const decision = normalizeDecision(proposalDecisionSelect.value)
     if (proposalEditId) {
       await updateReviewComment(proposalEditId, { body: message, severity, category, decision })
@@ -429,7 +486,7 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
     void renderReviewWorkspace(selectedReview, currentWorkspaceFileIndex)
     return
   }
-  const isClosedReview = (review: Review) => review.status === ReviewStatusConst.CLOSED || review.status === ReviewStatusConst.APPROVED
+  const isClosedReview = (review: Review) => review.status === ReviewStatusConst.CLOSED || review.status === ReviewStatusConst.APPROVED || (review.status as unknown) === 'Cerrada' || (review.status as unknown) === 'Aprobada'
   const visibleReviews = reviews.filter((review) => filter === ReviewFilter.CLOSED ? isClosedReview(review) : !isClosedReview(review))
   const accessTokenField = hasRepositoryAccessToken()
     ? ''

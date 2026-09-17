@@ -170,9 +170,9 @@ export interface TranslationDictionary {
       approved: string
     }
     severities: {
-      baja: string
-      media: string
-      alta: string
+      low: string
+      medium: string
+      high: string
     }
     categories: {
       solid: string
@@ -180,10 +180,10 @@ export interface TranslationDictionary {
       quality: string
     }
     decisions: {
-      pendiente: string
-      deseable: string
-      importante: string
-      bloqueante: string
+      pending: string
+      desirable: string
+      important: string
+      blocking: string
     }
     authors: {
       localSlm: string

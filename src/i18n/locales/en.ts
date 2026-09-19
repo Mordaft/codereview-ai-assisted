@@ -166,6 +166,20 @@ export const en: TranslationDictionary = {
     errorRequired: 'Please check required fields before saving.',
     errorSave: 'Could not save configuration.',
     errorTest: 'Could not connect to the SLM runtime.',
+    storageEyebrow: 'Storage & Synchronization',
+    storageTitle: 'Local Data & PWA Cache',
+    storageDesc: 'Manage published updates and clear the local database or cache to force a clean synchronization.',
+    resetDataBtn: 'Reset Data & Cache',
+    resetDataConfirm: 'Do you want to delete all local IndexedDB data and PWA cache? The application will restart in a clean state.',
+    resetDataSuccess: 'Local data and cache deleted successfully.',
+  },
+  pwa: {
+    updateAvailable: 'New version available',
+    updateBtn: 'Update',
+    updating: 'Updating version...',
+    checkingUpdates: 'Checking for updates...',
+    upToDate: 'The application is up to date',
+    checkUpdatesBtn: 'Check for updates',
   },
   domain: {
     statuses: {

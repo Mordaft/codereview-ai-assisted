@@ -112,8 +112,41 @@ export function renderSettings(app: HTMLElement, options: SettingsOptions) {
           <small class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.contractHint')}</small>
         </label>
       </div>
+    </div>
+    <div class="settings-section settings-section--storage border-brand-line-light dark:!border-brand-line-dark">
+      <div>
+        <span class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.storageEyebrow')}</span>
+        <h2>${t('settings.storageTitle')}</h2>
+        <p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.storageDesc')}</p>
+      </div>
+      <div class="storage-actions flex flex-wrap items-center gap-3 mt-4">
+        <button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" id="check-pwa-updates" type="button">
+          ↻ ${t('pwa.checkUpdatesBtn')}
+        </button>
+        <button class="outline-action bg-brand-surface-light text-red-600 border-red-300 hover:bg-red-50 dark:!bg-brand-surface-dark dark:!text-red-400 dark:!border-red-900 dark:hover:!bg-red-950/30" id="reset-pwa-data" type="button">
+          ⚠ ${t('settings.resetDataBtn')}
+        </button>
+        <span id="pwa-update-status" class="text-xs text-brand-muted-light dark:!text-brand-muted-dark"></span>
+      </div>
     </div>`
   )
+
+  document.querySelector('#check-pwa-updates')?.addEventListener('click', async () => {
+    const statusElem = document.querySelector('#pwa-update-status')
+    if (statusElem) statusElem.textContent = t('pwa.checkingUpdates')
+    const { checkForUpdates } = await import('../pwa-update')
+    const result = await checkForUpdates()
+    if (statusElem) statusElem.textContent = result.message
+  })
+
+  document.querySelector('#reset-pwa-data')?.addEventListener('click', async () => {
+    if (window.confirm(t('settings.resetDataConfirm'))) {
+      const statusElem = document.querySelector('#pwa-update-status')
+      if (statusElem) statusElem.textContent = t('settings.resetDataSuccess')
+      const { resetDatabaseAndCache } = await import('../review-db')
+      await resetDatabaseAndCache()
+    }
+  })
 
   document.querySelector('#back-to-reviews')?.addEventListener('click', () => navigate('#/reviews'))
   document.querySelector('#settings-theme-toggle')?.addEventListener('click', toggleTheme)

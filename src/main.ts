@@ -92,9 +92,7 @@ async function applyRoute() {
 }
 
 async function start() {
-  if ('serviceWorker' in navigator && import.meta.env.PROD) {
-    await navigator.serviceWorker.register('./sw.js')
-  }
+  void import('./pwa-update').then(({ initPwaUpdate }) => initPwaUpdate())
 
   await refreshReviews()
   window.addEventListener('hashchange', () => void applyRoute())

@@ -166,6 +166,20 @@ export const es: TranslationDictionary = {
     errorRequired: 'Revisa los campos obligatorios antes de guardar.',
     errorSave: 'No se pudo guardar la configuración.',
     errorTest: 'No se pudo conectar con el runtime SLM.',
+    storageEyebrow: 'Almacenamiento y sincronización',
+    storageTitle: 'Datos locales y caché PWA',
+    storageDesc: 'Gestione las actualizaciones publicadas y limpie la base de datos local o la caché para forzar una sincronización limpia.',
+    resetDataBtn: 'Restablecer datos y caché',
+    resetDataConfirm: '¿Desea borrar todos los datos locales de IndexedDB y la caché de la PWA? La aplicación se reiniciará en un estado limpio.',
+    resetDataSuccess: 'Datos locales y caché eliminados correctamente.',
+  },
+  pwa: {
+    updateAvailable: 'Nueva versión disponible',
+    updateBtn: 'Actualizar',
+    updating: 'Actualizando versión...',
+    checkingUpdates: 'Buscando actualizaciones...',
+    upToDate: 'La aplicación está actualizada',
+    checkUpdatesBtn: 'Buscar actualizaciones',
   },
   domain: {
     statuses: {

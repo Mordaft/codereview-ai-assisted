@@ -262,3 +262,39 @@ export async function addManualReviewComment(reviewId: number, input: {
     await database.reviews.update(reviewId, { comments: totalComments, updated: new Date().toISOString() })
   })
 }
+
+export async function resetDatabaseAndCache() {
+  try {
+    await database.delete()
+  } catch (err) {
+    console.warn('[DB] Error eliminando Dexie:', err)
+  }
+
+  try {
+    if ('caches' in window) {
+      const cacheKeys = await caches.keys()
+      await Promise.all(cacheKeys.map((key) => caches.delete(key)))
+    }
+  } catch (err) {
+    console.warn('[DB] Error eliminando caches:', err)
+  }
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(registrations.map((reg) => reg.unregister()))
+    }
+  } catch (err) {
+    console.warn('[DB] Error desregistrando service workers:', err)
+  }
+
+  try {
+    localStorage.clear()
+    sessionStorage.clear()
+  } catch (err) {
+    console.warn('[DB] Error limpiando storage:', err)
+  }
+
+  window.location.reload()
+}
+

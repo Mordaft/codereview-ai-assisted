@@ -166,6 +166,20 @@ export interface TranslationDictionary {
     errorRequired: string
     errorSave: string
     errorTest: string
+    storageEyebrow: string
+    storageTitle: string
+    storageDesc: string
+    resetDataBtn: string
+    resetDataConfirm: string
+    resetDataSuccess: string
+  }
+  pwa: {
+    updateAvailable: string
+    updateBtn: string
+    updating: string
+    checkingUpdates: string
+    upToDate: string
+    checkUpdatesBtn: string
   }
   domain: {
     statuses: {

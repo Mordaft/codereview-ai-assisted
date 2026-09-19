@@ -1,4 +1,4 @@
-import{W as e,b as t,c as n,d as r,i,m as a,n as o,p as s,r as c,s as l,u,y as d}from"./index-DvYkLLok.js";function f(f,p){let{reviews:m,navigate:h}=p,g=e(),_=[...m].sort((e,t)=>new Date(t.createdAt||0).getTime()-new Date(e.createdAt||0).getTime()),v=m.filter(e=>!i(e)).length,y=m.filter(e=>e.provider?.toLowerCase()===`github`),b=m.filter(e=>e.provider?.toLowerCase()===`gitlab`),x=m.length,S=y.length,C=b.length,w=x>0?Math.round(S/x*100):0,T=x>0?100-w:0,E=2*Math.PI*38,D=w/100*E,O=T/100*E,k=new Date,A=864e5,j=new Map;for(let e of m)if(e.createdAt){let t=new Date(e.createdAt);if(!Number.isNaN(t.getTime())){let e=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,`0`)}-${String(t.getDate()).padStart(2,`0`)}`;j.set(e,(j.get(e)??0)+1)}}let M=6-k.getDay(),N=new Date(k.getFullYear(),k.getMonth(),k.getDate()+M),P=new Date(N.getTime()-139*A),F=s()===`es`?[`Ene`,`Feb`,`Mar`,`Abr`,`May`,`Jun`,`Jul`,`Ago`,`Sep`,`Oct`,`Nov`,`Dic`]:[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`],I=s()===`es`?[``,`Lun`,``,`Mié`,``,`Vie`,``]:[``,`Mon`,``,`Wed`,``,`Fri`,``],L=new Date(P.getTime()),R=``,z=``,B=-1;for(let e=0;e<20;e++){let t=30+e*14;for(let e=0;e<7;e++){let n=20+e*14,r=L.getFullYear(),i=L.getMonth(),o=L.getDate(),s=`${r}-${String(i+1).padStart(2,`0`)}-${String(o).padStart(2,`0`)}`;e===0&&i!==B&&(z+=`<text x="${t}" y="14" class="heatmap-text">${F[i]}</text>`,B=i);let c=L.getTime()>k.getTime(),l=c?0:j.get(s)??0,u=0;!c&&l>0&&(u=l===1?1:l===2?2:l<=4?3:4);let d=l>0?a(`history.reviewsOnDate`,{count:l,date:s}):a(`history.noReviewsOnDate`,{date:s});R+=`<rect class="heatmap-cell heatmap-cell--level-${u} ${c?`heatmap-cell--future`:``}" x="${t}" y="${n}" width="11" height="11" rx="2" ry="2"><title>${d}</title></rect>`,L=new Date(L.getTime()+A)}}let V=``;for(let e=0;e<7;e++)if(I[e]){let t=20+e*14+11-2;V+=`<text x="24" y="${t}" class="heatmap-text text-right" text-anchor="end">${I[e]}</text>`}let H=_.length?_.map(e=>{let t=e.model||g.model||`llama3.2`,n=e.processedFilesCount??e.remoteFiles?.length??0,r=e.comments??0,i=c(e.processingTimeMs),s=o(e.createdAt),l=d(e.status),f=u(e.status);return`
+import{W as e,b as t,c as n,d as r,i,m as a,n as o,p as s,r as c,s as l,u,y as d}from"./index-CsTOpFkU.js";function f(f,p){let{reviews:m,navigate:h}=p,g=e(),_=[...m].sort((e,t)=>new Date(t.createdAt||0).getTime()-new Date(e.createdAt||0).getTime()),v=m.filter(e=>!i(e)).length,y=m.filter(e=>e.provider?.toLowerCase()===`github`),b=m.filter(e=>e.provider?.toLowerCase()===`gitlab`),x=m.length,S=y.length,C=b.length,w=x>0?Math.round(S/x*100):0,T=x>0?100-w:0,E=2*Math.PI*38,D=w/100*E,O=T/100*E,k=new Date,A=new Date(k.getFullYear(),k.getMonth(),k.getDate(),23,59,59,999),j=864e5,M=new Map;for(let e of m)if(e.createdAt){let t=new Date(e.createdAt);if(!Number.isNaN(t.getTime())){let e=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,`0`)}-${String(t.getDate()).padStart(2,`0`)}`;M.set(e,(M.get(e)??0)+1)}}let N=k.getFullYear(),P=k.getMonth(),F=new Date(N,P-9,1),I=new Date(N,P+1,0,23,59,59,999),L=F.getDay(),R=new Date(F.getFullYear(),F.getMonth(),F.getDate()-L),z=6-I.getDay(),B=new Date(I.getFullYear(),I.getMonth(),I.getDate()+z),V=Math.round((B.getTime()-R.getTime())/j)+1,H=Math.ceil(V/7),U=30+H*13,W=s()===`es`?[`Ene`,`Feb`,`Mar`,`Abr`,`May`,`Jun`,`Jul`,`Ago`,`Sep`,`Oct`,`Nov`,`Dic`]:[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`],G=s()===`es`?[``,`Lun`,``,`Mié`,``,`Vie`,``]:[``,`Mon`,``,`Wed`,``,`Fri`,``],K=new Date(R.getTime()),q=``,J=``,Y=new Set;for(let e=0;e<H;e++){let t=30+e*13;for(let e=0;e<7;e++){let n=20+e*13,r=K.getFullYear(),i=K.getMonth(),o=K.getDate(),s=`${r}-${String(i+1).padStart(2,`0`)}-${String(o).padStart(2,`0`)}`;if(K>=F&&K<=I){let e=`${r}-${i}`;Y.has(e)||(Y.add(e),J+=`<text x="${t}" y="14" class="heatmap-text">${W[i]}</text>`);let o=K.getTime()>A.getTime(),c=o?0:M.get(s)??0,l=0;!o&&c>0&&(l=c===1?1:c===2?2:c<=4?3:4);let u=c>0?a(`history.reviewsOnDate`,{count:c,date:s}):a(`history.noReviewsOnDate`,{date:s});q+=`<rect class="heatmap-cell heatmap-cell--level-${l} ${o?`heatmap-cell--future`:``}" x="${t}" y="${n}" width="10" height="10" rx="2" ry="2"><title>${u}</title></rect>`}K=new Date(K.getTime()+j)}}let X=``;for(let e=0;e<7;e++)if(G[e]){let t=20+e*13+10-2;X+=`<text x="24" y="${t}" class="heatmap-text text-right" text-anchor="end">${G[e]}</text>`}let Z=_.length?_.map(e=>{let t=e.model||g.model||`llama3.2`,n=e.processedFilesCount??e.remoteFiles?.length??0,r=e.comments??0,i=c(e.processingTimeMs),s=o(e.createdAt),l=d(e.status),f=u(e.status);return`
       <tr class="history-row" data-history-review-id="${e.id}" title="${a(`history.openReview`)}">
         <td class="history-cell history-cell--title">
           <div class="history-title-wrapper">
@@ -111,20 +111,18 @@ import{W as e,b as t,c as n,d as r,i,m as a,n as o,p as s,r as c,s as l,u,y as d
             </div>
             <div class="activity-heatmap">
               <div class="heatmap-container">
-                <svg class="heatmap-svg" width="310" height="123" viewBox="0 0 310 123">
-                  ${z}
-                  ${V}
-                  ${R}
+                <svg class="heatmap-svg" width="${U}" height="116" viewBox="0 0 ${U} 116">
+                  ${J}
+                  ${X}
+                  ${q}
                 </svg>
               </div>
-              <div class="heatmap-legend">
-                <span class="heatmap-legend-label">${a(`history.legendLess`)}</span>
+              <div class="heatmap-legend" aria-hidden="true">
                 <span class="heatmap-legend-cell heatmap-cell--level-0"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-1"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-2"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-3"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-4"></span>
-                <span class="heatmap-legend-label">${a(`history.legendMore`)}</span>
               </div>
             </div>
           </section>
@@ -153,7 +151,7 @@ import{W as e,b as t,c as n,d as r,i,m as a,n as o,p as s,r as c,s as l,u,y as d
                 </tr>
               </thead>
               <tbody>
-                ${H}
+                ${Z}
               </tbody>
             </table>
           </div>

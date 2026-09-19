@@ -1,4 +1,4 @@
-import{G as e,K as t,W as n,b as r,d as i,m as a,s as o}from"./index-DvYkLLok.js";import{n as s,r as c,t as l}from"./review-prompts-BEeKHNk5.js";function u(u,d){let{navigate:f}=d,p=n(),m=l();u.innerHTML=`
+import{G as e,K as t,W as n,b as r,d as i,m as a,s as o}from"./index-CsTOpFkU.js";import{n as s,r as c,t as l}from"./review-prompts-BEeKHNk5.js";function u(u,d){let{navigate:f}=d,p=n(),m=l();u.innerHTML=`
     <div class="settings-shell bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark">
       <header class="settings-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark">
         <button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${a(`common.backToReviews`)}</button>

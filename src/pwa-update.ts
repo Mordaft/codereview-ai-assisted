@@ -96,6 +96,19 @@ export async function initPwaUpdate() {
     return
   }
 
+  // En modo desarrollo (Vite dev server), desactivar el Service Worker para evitar conflictos con HMR y WebSockets
+  if (import.meta.env.DEV) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations()
+      for (const reg of registrations) {
+        await reg.unregister()
+      }
+    } catch {
+      // Ignorar errores al desregistrar en dev
+    }
+    return
+  }
+
   // Escuchar cuando el nuevo Service Worker toma el control y recargar la página limpia
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return

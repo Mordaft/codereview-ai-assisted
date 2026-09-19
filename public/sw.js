@@ -83,6 +83,15 @@ function isStaticRequest(request) {
     return false
   }
 
+  // Excluir peticiones internas de desarrollo y HMR de Vite
+  if (
+    pathname.startsWith('/@') ||
+    pathname.includes('/@vite/') ||
+    url.searchParams.has('token')
+  ) {
+    return false
+  }
+
   // Permitir explícitamente recursos estáticos de fuentes de Google (hojas de estilo y archivos de fuentes)
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
     return true

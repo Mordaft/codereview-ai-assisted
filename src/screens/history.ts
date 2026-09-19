@@ -15,30 +15,41 @@ export interface HistoryOptions {
   reviews: Review[]
   navigate: (hash: string) => void
 }
+export function getWeeksCountForMonths(monthsCount: number, today: Date = new Date()): number {
+  const curYear = today.getFullYear()
+  const curMonth = today.getMonth()
+  const periodStart = new Date(curYear, curMonth - (monthsCount - 1), 1)
+  const periodEnd = new Date(curYear, curMonth + 1, 0, 23, 59, 59, 999)
 
-export function renderHistory(app: HTMLElement, options: HistoryOptions) {
-  const { reviews, navigate } = options
-  const slmConfig = getSlmConfig()
-  const sortedReviews = [...reviews].sort(
-    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-  )
-  const activeReviewsCount = reviews.filter((review) => !isClosedReview(review)).length
+  const startDayOfWeek = periodStart.getDay()
+  const gridStartDate = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() - startDayOfWeek)
 
-  // 1. Distribution calculation
-  const githubReviews = reviews.filter((r) => r.provider?.toLowerCase() === 'github')
-  const gitlabReviews = reviews.filter((r) => r.provider?.toLowerCase() === 'gitlab')
-  const totalReviews = reviews.length
-  const githubCount = githubReviews.length
-  const gitlabCount = gitlabReviews.length
-  const githubPct = totalReviews > 0 ? Math.round((githubCount / totalReviews) * 100) : 0
-  const gitlabPct = totalReviews > 0 ? 100 - githubPct : 0
+  const endDayOfWeek = periodEnd.getDay()
+  const daysUntilEndOfWeek = 6 - endDayOfWeek
+  const gridEndDate = new Date(periodEnd.getFullYear(), periodEnd.getMonth(), periodEnd.getDate() + daysUntilEndOfWeek)
 
-  const radius = 38
-  const circumference = 2 * Math.PI * radius
-  const githubStrokeDash = (githubPct / 100) * circumference
-  const gitlabStrokeDash = (gitlabPct / 100) * circumference
+  const dayMs = 24 * 60 * 60 * 1000
+  const totalDays = Math.round((gridEndDate.getTime() - gridStartDate.getTime()) / dayMs) + 1
+  return Math.ceil(totalDays / 7)
+}
 
-  // 2. Activity Heatmap calculation (Full 1-year period, e.g. Oct 2025 to Sep 2026)
+export function getRequiredHeatmapWidth(monthsCount: number, today: Date = new Date()): number {
+  const weeks = getWeeksCountForMonths(monthsCount, today)
+  const leftPadding = 30
+  const step = 13 // 10px cellSize + 3px gap
+  return leftPadding + weeks * step
+}
+
+export function getOptimalMonthsCount(availableWidth: number, today: Date = new Date()): number {
+  for (let m = 10; m >= 4; m--) {
+    if (getRequiredHeatmapWidth(m, today) <= availableWidth) {
+      return m
+    }
+  }
+  return 4
+}
+
+export function generateHeatmapSvg(reviews: Review[], monthsCount: number): string {
   const today = new Date()
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999)
   const dayMs = 24 * 60 * 60 * 1000
@@ -57,22 +68,15 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
     }
   }
 
-  // Full 10-month period: 10 full months ending at current month
-  // e.g. If today is Sep 19, 2026: periodStart = 2025-12-01, periodEnd = 2026-09-30 (Dec 2025 to Sep 2026)
   const curYear = today.getFullYear()
   const curMonth = today.getMonth()
-  const periodStart = new Date(curYear, curMonth - 9, 1)
+  const periodStart = new Date(curYear, curMonth - (monthsCount - 1), 1)
   const periodEnd = new Date(curYear, curMonth + 1, 0, 23, 59, 59, 999)
 
   const startDayOfWeek = periodStart.getDay()
   const gridStartDate = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() - startDayOfWeek)
 
-  const endDayOfWeek = periodEnd.getDay()
-  const daysUntilEndOfWeek = 6 - endDayOfWeek
-  const gridEndDate = new Date(periodEnd.getFullYear(), periodEnd.getMonth(), periodEnd.getDate() + daysUntilEndOfWeek)
-
-  const totalDays = Math.round((gridEndDate.getTime() - gridStartDate.getTime()) / dayMs) + 1
-  const weeksCount = Math.ceil(totalDays / 7)
+  const weeksCount = getWeeksCountForMonths(monthsCount, today)
 
   const cellSize = 10
   const cellGap = 3
@@ -141,6 +145,42 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
       daysSvg += `<text x="${leftPadding - 6}" y="${y}" class="heatmap-text text-right" text-anchor="end">${dayLabels[d]}</text>`
     }
   }
+
+  return `
+    <svg class="heatmap-svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
+      ${monthsSvg}
+      ${daysSvg}
+      ${cellsSvg}
+    </svg>
+  `
+}
+
+export function renderHistory(app: HTMLElement, options: HistoryOptions) {
+  const { reviews, navigate } = options
+  const slmConfig = getSlmConfig()
+  const sortedReviews = [...reviews].sort(
+    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  )
+  const activeReviewsCount = reviews.filter((review) => !isClosedReview(review)).length
+
+  // 1. Distribution calculation
+  const githubReviews = reviews.filter((r) => r.provider?.toLowerCase() === 'github')
+  const gitlabReviews = reviews.filter((r) => r.provider?.toLowerCase() === 'gitlab')
+  const totalReviews = reviews.length
+  const githubCount = githubReviews.length
+  const gitlabCount = gitlabReviews.length
+  const githubPct = totalReviews > 0 ? Math.round((githubCount / totalReviews) * 100) : 0
+  const gitlabPct = totalReviews > 0 ? 100 - githubPct : 0
+
+  const radius = 38
+  const circumference = 2 * Math.PI * radius
+  const githubStrokeDash = (githubPct / 100) * circumference
+  const gitlabStrokeDash = (gitlabPct / 100) * circumference
+
+  // 2. Initial Heatmap month estimation (adapted to available width: 10, 8, 7, 5, or 4 months)
+  const estimatedWidth = Math.max(300, window.innerWidth - 680)
+  let currentMonths = getOptimalMonthsCount(estimatedWidth)
+  const initialHeatmapSvg = generateHeatmapSvg(reviews, currentMonths)
 
   // 3. Table Rows
   const rowsHtml = sortedReviews.length ? sortedReviews.map((review) => {
@@ -267,12 +307,8 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
               <p class="history-card__subtitle">${t('history.activityHeatmapSubtitle')}</p>
             </div>
             <div class="activity-heatmap">
-              <div class="heatmap-container">
-                <svg class="heatmap-svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
-                  ${monthsSvg}
-                  ${daysSvg}
-                  ${cellsSvg}
-                </svg>
+              <div class="heatmap-container" id="heatmap-container">
+                ${initialHeatmapSvg}
               </div>
               <div class="heatmap-legend" aria-hidden="true">
                 <span class="heatmap-legend-cell heatmap-cell--level-0"></span>
@@ -322,13 +358,73 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
     </div>
   `
 
-  document.querySelector('#reviews-nav')?.addEventListener('click', () => navigate('#/reviews'))
-  document.querySelector('#history-nav')?.addEventListener('click', () => navigate('#/history'))
-  document.querySelector('#settings-nav')?.addEventListener('click', () => navigate('#/settings'))
+  const heatmapContainer = document.querySelector<HTMLDivElement>('#heatmap-container')
+  let observer: ResizeObserver | null = null
+
+  if (heatmapContainer) {
+    const existingObserver = (window as unknown as { activeHistoryResizeObserver?: ResizeObserver }).activeHistoryResizeObserver
+    if (existingObserver) {
+      existingObserver.disconnect()
+    }
+
+    const updateHeatmap = (width: number) => {
+      if (width <= 0) return
+      const optimal = getOptimalMonthsCount(width)
+      if (optimal !== currentMonths) {
+        currentMonths = optimal
+        heatmapContainer.innerHTML = generateHeatmapSvg(reviews, currentMonths)
+      }
+    }
+
+    const initialWidth = heatmapContainer.clientWidth
+    if (initialWidth > 0) {
+      updateHeatmap(initialWidth)
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = entry.contentRect.width
+          updateHeatmap(width)
+        }
+      })
+      observer.observe(heatmapContainer)
+      ;(window as unknown as { activeHistoryResizeObserver?: ResizeObserver }).activeHistoryResizeObserver = observer
+    }
+  }
+
+  const cleanupObserver = () => {
+    if (observer) {
+      observer.disconnect()
+      observer = null
+    }
+    const win = window as unknown as { activeHistoryResizeObserver?: ResizeObserver }
+    if (win.activeHistoryResizeObserver) {
+      win.activeHistoryResizeObserver.disconnect()
+      win.activeHistoryResizeObserver = undefined
+    }
+  }
+
+  document.querySelector('#reviews-nav')?.addEventListener('click', () => {
+    cleanupObserver()
+    navigate('#/reviews')
+  })
+  document.querySelector('#history-nav')?.addEventListener('click', () => {
+    cleanupObserver()
+    navigate('#/history')
+  })
+  document.querySelector('#settings-nav')?.addEventListener('click', () => {
+    cleanupObserver()
+    navigate('#/settings')
+  })
   document.querySelector('#theme-toggle')?.addEventListener('click', toggleTheme)
-  document.querySelector('#lang-toggle')?.addEventListener('click', () => toggleLanguage())
+  document.querySelector('#lang-toggle')?.addEventListener('click', () => {
+    cleanupObserver()
+    toggleLanguage()
+  })
   document.querySelectorAll<HTMLTableRowElement>('.history-row[data-history-review-id]').forEach((row) => {
     row.addEventListener('click', () => {
+      cleanupObserver()
       const reviewId = Number(row.dataset.historyReviewId)
       if (reviewId) navigate(`#/reviews/${reviewId}`)
     })

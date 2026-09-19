@@ -418,7 +418,7 @@ html.dark .status--thinking {
 /* History Screen Styles */
 .history-metrics-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 360px minmax(0, 1fr);
   gap: 16px;
   margin: 26px 0 22px;
 }
@@ -431,6 +431,7 @@ html.dark .status--thinking {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  min-width: 0;
 }
 
 .history-card__header {
@@ -583,16 +584,24 @@ html.dark .distribution-fill--gitlab {
   flex-direction: column;
   height: 100%;
   justify-content: space-between;
+  min-width: 0;
+  width: 100%;
 }
 
 .heatmap-container {
-  overflow-x: auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  display: flex;
+  justify-content: flex-start;
   padding-bottom: 4px;
-  scrollbar-width: thin;
 }
 
 .heatmap-svg {
   display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .heatmap-text {

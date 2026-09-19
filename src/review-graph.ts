@@ -44,7 +44,43 @@ const ReviewState = Annotation.Root({
   humanDecision: Annotation<HumanReviewDecision>,
 })
 
+const activeReviewControllers = new Map<number, AbortController>()
+
+export function registerReviewController(reviewId: number): AbortController {
+  const existing = activeReviewControllers.get(reviewId)
+  if (existing) {
+    existing.abort()
+  }
+  const controller = new AbortController()
+  activeReviewControllers.set(reviewId, controller)
+  return controller
+}
+
+export function getReviewController(reviewId: number): AbortController | undefined {
+  return activeReviewControllers.get(reviewId)
+}
+
+export function cancelReviewWorkflow(reviewId: number): void {
+  const controller = activeReviewControllers.get(reviewId)
+  if (controller) {
+    controller.abort()
+    activeReviewControllers.delete(reviewId)
+  }
+  emitReviewThinking({
+    reviewId,
+    phase: 'completed',
+  })
+}
+
 async function acquireReviewData(state: typeof ReviewState.State) {
+  const controller = getReviewController(state.reviewId)
+  if (controller?.signal.aborted) {
+    return {
+      reviewId: state.reviewId,
+      status: ReviewStatus.CLOSED,
+      sourceFiles: [],
+    }
+  }
   const files = await listReviewFiles(state.reviewId)
   return {
     reviewId: state.reviewId,
@@ -54,6 +90,19 @@ async function acquireReviewData(state: typeof ReviewState.State) {
 }
 
 async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
+  const controller = getReviewController(state.reviewId) ?? registerReviewController(state.reviewId)
+  const signal = controller.signal
+
+  if (signal.aborted) {
+    emitReviewThinking({ reviewId: state.reviewId, phase: 'completed' })
+    await updateReviewStatus(state.reviewId, ReviewStatus.CLOSED)
+    emitReviewProgress(state.reviewId)
+    return {
+      status: ReviewStatus.CLOSED,
+      suggestions: [],
+    }
+  }
+
   const startedAt = performance.now()
   const files = await listReviewFiles(state.reviewId)
   const analyzableFiles = selectAnalyzableReviewFiles(files)
@@ -61,6 +110,11 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
   await clearSlmSuggestions(state.reviewId)
   const suggestions: ReviewSuggestion[] = []
   for (const [index, file] of analyzableFiles.entries()) {
+    if (signal.aborted) {
+      trace('slm.analysis.aborted', { reviewId: state.reviewId, atFile: file.path })
+      break
+    }
+
     trace('slm.file.start', { reviewId: state.reviewId, filePath: file.path })
     emitReviewThinking({
       reviewId: state.reviewId,
@@ -69,32 +123,51 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
       totalFiles: analyzableFiles.length,
       phase: 'thinking',
     })
-    const fileSuggestions = await analyzeFileWithSlm(
-      file,
-      async (streamedSuggestion) => {
-        if (streamedSuggestion.filePath === file.path) {
-          await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
+
+    let fileSuggestions: ReturnType<typeof analyzeFileWithSlm> extends Promise<infer T> ? T : never = []
+    try {
+      fileSuggestions = await analyzeFileWithSlm(
+        file,
+        async (streamedSuggestion) => {
+          if (signal.aborted) return
+          if (streamedSuggestion.filePath === file.path) {
+            await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
+            emitReviewThinking({
+              reviewId: state.reviewId,
+              filePath: file.path,
+              fileIndex: index + 1,
+              totalFiles: analyzableFiles.length,
+              phase: 'suggesting',
+            })
+            emitReviewProgress(state.reviewId)
+          }
+        },
+        (thought) => {
+          if (signal.aborted) return
           emitReviewThinking({
             reviewId: state.reviewId,
             filePath: file.path,
             fileIndex: index + 1,
             totalFiles: analyzableFiles.length,
-            phase: 'suggesting',
+            thought,
+            phase: 'thinking',
           })
-          emitReviewProgress(state.reviewId)
-        }
-      },
-      (thought) => {
-        emitReviewThinking({
-          reviewId: state.reviewId,
-          filePath: file.path,
-          fileIndex: index + 1,
-          totalFiles: analyzableFiles.length,
-          thought,
-          phase: 'thinking',
-        })
-      },
-    )
+        },
+        signal,
+      )
+    } catch (err) {
+      if (signal.aborted) {
+        trace('slm.analysis.aborted', { reviewId: state.reviewId, atFile: file.path })
+        break
+      }
+      trace('slm.file.error', { reviewId: state.reviewId, filePath: file.path, error: err })
+    }
+
+    if (signal.aborted) {
+      trace('slm.analysis.aborted', { reviewId: state.reviewId, atFile: file.path })
+      break
+    }
+
     const validSuggestions = fileSuggestions.filter((suggestion) => suggestion.filePath === file.path)
     suggestions.push(...validSuggestions)
     await saveSlmSuggestions(state.reviewId, validSuggestions)
@@ -102,16 +175,30 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
     emitReviewProgress(state.reviewId)
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })
   }
+
   const elapsedMs = Math.round(performance.now() - startedAt)
   await updateReviewAnalysisMetrics(state.reviewId, {
     processingTimeMs: elapsedMs,
     processedFilesCount: analyzableFiles.length,
     model: getSlmConfig().model,
   })
+
+  activeReviewControllers.delete(state.reviewId)
+
   emitReviewThinking({
     reviewId: state.reviewId,
     phase: 'completed',
   })
+
+  if (signal.aborted) {
+    await updateReviewStatus(state.reviewId, ReviewStatus.CLOSED)
+    emitReviewProgress(state.reviewId)
+    return {
+      status: ReviewStatus.CLOSED,
+      suggestions,
+    }
+  }
+
   await updateReviewStatus(state.reviewId, ReviewStatus.IN_PROGRESS)
   emitReviewProgress(state.reviewId)
   return {

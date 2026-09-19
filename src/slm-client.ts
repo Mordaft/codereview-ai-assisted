@@ -171,6 +171,7 @@ async function requestFileAnalysis(
   file: StoredReviewFile,
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
   onThinking?: (thought: string) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<SlmSuggestion[]> {
   const config = getSlmConfig()
   const prompts = getReviewPromptConfig()
@@ -182,6 +183,7 @@ async function requestFileAnalysis(
   const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal,
     body: JSON.stringify({
       model: config.model,
       temperature: config.temperature,
@@ -337,6 +339,10 @@ async function requestFileAnalysis(
   }
 
   while (true) {
+    if (signal?.aborted) {
+      reader.cancel().catch(() => {})
+      throw new DOMException('Aborted', 'AbortError')
+    }
     const { done, value } = await reader.read()
     if (done) break
 
@@ -353,54 +359,76 @@ async function requestFileAnalysis(
       try {
         const parsed = JSON.parse(dataStr) as ChatCompletionChunk
         const choice = parsed.choices?.[0]
-        if (!choice) continue
+        if (choice?.finish_reason) finishReason = choice.finish_reason
 
-        if (choice.finish_reason) {
-          finishReason = choice.finish_reason
-        }
-
-        const delta = choice.delta
+        const delta = choice?.delta
         if (!delta) continue
 
-        if (delta.reasoning_content) {
-          accumulatedThought += delta.reasoning_content
-          reasoningChars += delta.reasoning_content.length
-          if (onThinking) {
-            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
-          }
-        } else if (delta.reasoning) {
-          accumulatedThought += delta.reasoning
-          reasoningChars += delta.reasoning.length
+        // 1. Check reasoning_content / reasoning fields
+        const rawReasoning = delta.reasoning_content ?? delta.reasoning
+        if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
+          accumulatedThought += rawReasoning
+          reasoningChars += rawReasoning.length
           if (onThinking) {
             try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
           }
         }
 
-        if (delta.content) {
-          const clean = processContentDelta(delta.content)
-          if (clean) {
-            contentBuffer += clean
-            contentChars += clean.length
+        // 2. Check content field (may contain <think>...</think> tags)
+        if (typeof delta.content === 'string' && delta.content.length > 0) {
+          const cleanDelta = processContentDelta(delta.content)
+          if (cleanDelta.length > 0) {
+            contentBuffer += cleanDelta
+            contentChars += cleanDelta.length
             checkIncrementalSuggestions(contentBuffer)
           }
         }
       } catch {
-        // Skip unparseable SSE line
+        // Skip unparseable SSE chunk
       }
     }
   }
 
-  // Flush any remaining partial think buffer
-  if (thinkTagBuffer) {
-    if (!inThinkTag) {
-      contentBuffer += thinkTagBuffer
-      contentChars += thinkTagBuffer.length
-    } else {
+  // Flush any remaining partial buffer
+  if (streamBuffer.trim().startsWith('data:')) {
+    const dataStr = streamBuffer.trim().slice(5).trim()
+    if (dataStr !== '[DONE]') {
+      try {
+        const parsed = JSON.parse(dataStr) as ChatCompletionChunk
+        const delta = parsed.choices?.[0]?.delta
+        const rawReasoning = delta?.reasoning_content ?? delta?.reasoning
+        if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
+          accumulatedThought += rawReasoning
+          reasoningChars += rawReasoning.length
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
+        }
+        if (typeof delta?.content === 'string' && delta.content.length > 0) {
+          const cleanDelta = processContentDelta(delta.content)
+          if (cleanDelta.length > 0) {
+            contentBuffer += cleanDelta
+            contentChars += cleanDelta.length
+            checkIncrementalSuggestions(contentBuffer)
+          }
+        }
+      } catch {
+        // Skip
+      }
+    }
+  }
+
+  // If think tag wasn't closed before stream ended, flush remaining think tag buffer
+  if (thinkTagBuffer.length > 0) {
+    if (inThinkTag) {
       accumulatedThought += thinkTagBuffer
       reasoningChars += thinkTagBuffer.length
       if (onThinking) {
         try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
       }
+    } else {
+      contentBuffer += thinkTagBuffer
+      contentChars += thinkTagBuffer.length
     }
   }
 
@@ -453,13 +481,19 @@ export async function analyzeFileWithSlm(
   file: StoredReviewFile,
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
   onThinking?: (thought: string) => void | Promise<void>,
+  signal?: AbortSignal,
 ) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    if (signal?.aborted) return []
     try {
-      const suggestions = await requestFileAnalysis(file, onSuggestion, onThinking)
+      const suggestions = await requestFileAnalysis(file, onSuggestion, onThinking, signal)
       trace('slm.file.parsed', { filePath: file.path, attempt, suggestions: suggestions.length })
       return suggestions
     } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+        trace('slm.file.aborted', { filePath: file.path })
+        return []
+      }
       trace('slm.file.retry', { filePath: file.path, attempt, reason: error instanceof Error ? error.message : 'unknown' })
       if (attempt === 2) {
         trace('slm.file.skipped', { filePath: file.path })

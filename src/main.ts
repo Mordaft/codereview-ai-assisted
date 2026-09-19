@@ -31,6 +31,8 @@ import {
   ReviewStatus as ReviewStatusConst,
 } from './enums'
 
+import { cancelReviewWorkflow } from './review-runtime'
+
 let reviews: Review[] = []
 let reviewKpis = { activeReviews: 0, pendingSlmComments: 0, publishedComments: 0 }
 let selectedReviewId: number | undefined
@@ -48,6 +50,23 @@ const isClosedReview = (review: Review) =>
   review.status === ReviewStatusConst.APPROVED ||
   (review.status as unknown) === 'Cerrada' ||
   (review.status as unknown) === 'Aprobada'
+
+function isReviewProcessing(review: Review): boolean {
+  if (
+    review.status === ReviewStatusConst.IN_PREPARATION ||
+    (review.status as unknown) === 'En preparacion' ||
+    (review.status as unknown) === 'inPreparation'
+  ) {
+    return true
+  }
+  if (review.id) {
+    const thinking = getReviewThinking(review.id)
+    if (thinking && thinking.phase !== 'completed') {
+      return true
+    }
+  }
+  return false
+}
 
 function parseRoute() {
   const hash = window.location.hash.replace(/^#\/?/, '')
@@ -229,6 +248,7 @@ function reviewCard(review: Review) {
 async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
   currentWorkspaceFileIndex = activeFileIndex
   const isReviewLocked = review.status === ReviewStatusConst.APPROVED || review.status === ReviewStatusConst.CLOSED || (review.status as unknown) === 'Aprobada' || (review.status as unknown) === 'Cerrada'
+  const isProcessing = isReviewProcessing(review)
   const storedComments = review.id ? await listReviewComments(review.id) : []
   const workspaceFiles = review.remoteFiles?.length ? review.remoteFiles.map((file) => ({ path: file.path, type: file.path.split('.').at(-1)?.toUpperCase() ?? 'TXT', lines: (file.content ?? file.patch ?? t('workspace.noFilesDownloadedText')).split('\n') })) : [{ path: t('workspace.noFilesDownloaded'), type: 'TXT', lines: [t('workspace.noFilesDownloadedText')] }]
   const workspaceComments = storedComments.length ? storedComments.map((comment) => ({
@@ -267,7 +287,7 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     ? `<span class="status status--thinking"><span class="thinking-pulse"></span>${thinking?.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')}</span>`
     : `<span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>`
 
-  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions">${statusDisplay}${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
+  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions">${statusDisplay}${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : isProcessing ? `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
     const fileComments = fileCommentsMap.get(file.path) ?? []
     const commentCount = fileComments.length
     const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH || (comment.severity as unknown) === 'alta')
@@ -294,7 +314,12 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     if (!review.id) return
     const decision = Number(button.dataset.decision) as ReviewAction
     try {
-      if (decision === ReviewAction.CLOSE || decision === ReviewAction.APPROVE) await publishPendingComments(review)
+      if (decision === ReviewAction.CLOSE) {
+        cancelReviewWorkflow(review.id)
+      }
+      if (decision === ReviewAction.APPROVE || (decision === ReviewAction.CLOSE && !isReviewProcessing(review))) {
+        await publishPendingComments(review)
+      }
       const nextStatus = decision === ReviewAction.APPROVE
         ? ReviewStatusConst.APPROVED
         : decision === ReviewAction.REOPEN
@@ -512,23 +537,6 @@ function renderSettings() {
       status.className = 'settings-status settings-status--error'
     }
   })
-}
-
-function isReviewProcessing(review: Review): boolean {
-  if (
-    review.status === ReviewStatusConst.IN_PREPARATION ||
-    (review.status as unknown) === 'En preparacion' ||
-    (review.status as unknown) === 'inPreparation'
-  ) {
-    return true
-  }
-  if (review.id) {
-    const thinking = getReviewThinking(review.id)
-    if (thinking && thinking.phase !== 'completed') {
-      return true
-    }
-  }
-  return false
 }
 
 function formatProcessingTime(ms?: number): string {
@@ -1103,6 +1111,7 @@ async function start() {
           if (review) {
             workspaceStatusElem.className = `status status--${statusClass(review.status)}`
             workspaceStatusElem.innerHTML = `<span></span>${tStatus(review.status)}`
+            void renderReviewWorkspace(review, currentWorkspaceFileIndex)
           }
         } else {
           const labelText = thinking.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')

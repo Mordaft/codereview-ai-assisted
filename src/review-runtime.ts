@@ -1,13 +1,15 @@
-import { reviewWorkflow, type ReviewGraphState } from './review-graph'
+import { cancelReviewWorkflow, registerReviewController, reviewWorkflow, type ReviewGraphState } from './review-graph'
 import { type HumanReviewDecision, ReviewStatus } from './enums'
 
 export type { HumanReviewDecision }
+export { cancelReviewWorkflow }
 
 function threadConfig(reviewId: number) {
   return { configurable: { thread_id: `review-${reviewId}` } }
 }
 
 export async function startReviewWorkflow(reviewId: number) {
+  registerReviewController(reviewId)
   return reviewWorkflow.invoke(
     {
       reviewId,

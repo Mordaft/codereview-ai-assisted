@@ -69,6 +69,7 @@ export type ReviewFilter = (typeof ReviewFilter)[keyof typeof ReviewFilter]
 export const AppScreen = {
   REVIEWS: 'reviews',
   SETTINGS: 'settings',
+  HISTORY: 'history',
 } as const
 export type AppScreen = (typeof AppScreen)[keyof typeof AppScreen]
 

@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import { parseReviewUrl } from './platform-url'
 import type { RemoteChange, RemoteComment, RemoteFile } from './platform-api'
+import { getSlmConfig } from './slm-config'
 import { trace } from './diagnostics'
 import {
   CommentCategory,
@@ -38,6 +39,9 @@ export interface Review {
   remoteChange?: RemoteChange
   remoteFiles?: RemoteFile[]
   remoteComments?: RemoteComment[]
+  model?: string
+  processingTimeMs?: number
+  processedFilesCount?: number
 }
 
 export interface StoredReviewFile extends RemoteFile {
@@ -114,6 +118,7 @@ export async function createReview(url: string, snapshot?: { change: RemoteChang
   const title = `${location.provider} #${location.changeNumber}: ${location.repository}`
   return database.transaction('rw', database.reviews, database.reviewFiles, database.reviewComments, async () => {
     const now = new Date().toISOString()
+    const slmConfig = getSlmConfig()
     const reviewId = await database.reviews.add({
       title,
       repository: location.repositoryPath,
@@ -126,6 +131,8 @@ export async function createReview(url: string, snapshot?: { change: RemoteChang
       remoteChange: snapshot?.change,
       remoteFiles: snapshot?.files,
       remoteComments: snapshot?.comments,
+      model: slmConfig.model,
+      processedFilesCount: snapshot?.files.length ?? 0,
     })
 
     if (snapshot) {
@@ -174,6 +181,15 @@ export async function saveSlmSuggestions(reviewId: number, suggestions: Array<{ 
 
 export async function updateReviewProgress(id: number, progress: number) {
   await database.reviews.update(id, { progress, updated: new Date().toISOString() })
+}
+
+export async function updateReviewAnalysisMetrics(id: number, metrics: { processingTimeMs: number; processedFilesCount: number; model?: string }) {
+  await database.reviews.update(id, {
+    processingTimeMs: metrics.processingTimeMs,
+    processedFilesCount: metrics.processedFilesCount,
+    ...(metrics.model ? { model: metrics.model } : {}),
+    updated: new Date().toISOString(),
+  })
 }
 
 export async function clearSlmSuggestions(reviewId: number) {

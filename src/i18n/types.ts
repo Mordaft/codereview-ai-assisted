@@ -200,4 +200,32 @@ export interface TranslationDictionary {
   alerts: {
     cannotUpdateReview: string
   }
+  history: {
+    eyebrow: string
+    title: string
+    subtitle: string
+    platformDistributionTitle: string
+    platformDistributionSubtitle: string
+    github: string
+    gitlab: string
+    reviewsCount: string
+    activityHeatmapTitle: string
+    activityHeatmapSubtitle: string
+    legendLess: string
+    legendMore: string
+    reviewsOnDate: string
+    noReviewsOnDate: string
+    tableTitle: string
+    tableSubtitle: string
+    colName: string
+    colRepoType: string
+    colStatus: string
+    colCreatedAt: string
+    colProcessedFiles: string
+    colSuggestions: string
+    colDuration: string
+    colModel: string
+    emptyReviews: string
+    openReview: string
+  }
 }

@@ -5,8 +5,9 @@ import {
   START,
   StateGraph,
 } from '@langchain/langgraph'
-import { clearSlmSuggestions, listReviewFiles, saveSlmSuggestions, updateReviewProgress, updateReviewStatus } from './review-db'
+import { clearSlmSuggestions, listReviewFiles, saveSlmSuggestions, updateReviewAnalysisMetrics, updateReviewProgress, updateReviewStatus } from './review-db'
 import { analyzeFileWithSlm } from './slm-client'
+import { getSlmConfig } from './slm-config'
 import { selectAnalyzableReviewFiles } from './review-scope'
 import { emitReviewProgress, emitReviewThinking } from './review-events'
 import { trace } from './diagnostics'
@@ -53,6 +54,7 @@ async function acquireReviewData(state: typeof ReviewState.State) {
 }
 
 async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
+  const startedAt = performance.now()
   const files = await listReviewFiles(state.reviewId)
   const analyzableFiles = selectAnalyzableReviewFiles(files)
   trace('slm.analysis.scope', { reviewId: state.reviewId, totalFiles: files.length, analyzableFiles: analyzableFiles.length, skippedFiles: files.length - analyzableFiles.length })
@@ -100,6 +102,12 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
     emitReviewProgress(state.reviewId)
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })
   }
+  const elapsedMs = Math.round(performance.now() - startedAt)
+  await updateReviewAnalysisMetrics(state.reviewId, {
+    processingTimeMs: elapsedMs,
+    processedFilesCount: analyzableFiles.length,
+    model: getSlmConfig().model,
+  })
   emitReviewThinking({
     reviewId: state.reviewId,
     phase: 'completed',

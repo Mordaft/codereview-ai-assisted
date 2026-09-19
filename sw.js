@@ -1,4 +1,5 @@
-const CACHE_NAME = 'codereview-shell-v2'
+const SW_VERSION = '1789818203632'
+const CACHE_NAME = `codereview-shell-${SW_VERSION}`
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
 
 const STATIC_EXTENSIONS = [
@@ -25,6 +26,22 @@ const STATIC_EXTENSIONS = [
 ]
 
 const STATIC_DESTINATIONS = ['document', 'script', 'style', 'image', 'font', 'manifest']
+
+/**
+ * Determina si una petición corresponde a navegación o documento HTML principal.
+ */
+function isNavigationRequest(request) {
+  if (!request) return false
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    return true
+  }
+  try {
+    const url = new URL(request.url)
+    return url.pathname === '/' || url.pathname.endsWith('/') || url.pathname.endsWith('/index.html')
+  } catch {
+    return false
+  }
+}
 
 /**
  * Determina si una petición corresponde a contenido estático y por tanto es susceptible de cachearse.
@@ -118,7 +135,11 @@ function isStaticRequest(request) {
 
 if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
   self.addEventListener('install', (event) => {
-    event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)))
+    event.waitUntil(
+      caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch((err) => {
+        console.warn('[SW] Error pre-cacheando app shell:', err)
+      })
+    )
     self.skipWaiting()
   })
 
@@ -131,12 +152,42 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
     self.clients.claim()
   })
 
+  self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+      self.skipWaiting()
+    }
+  })
+
   self.addEventListener('fetch', (event) => {
     // Ignorar y no cachear ninguna petición diferente a contenidos estáticos
     if (!isStaticRequest(event.request)) {
       return
     }
 
+    // Para navegación y documento HTML (index.html), estrategia Network-First con fallback a caché
+    if (isNavigationRequest(event.request)) {
+      event.respondWith(
+        fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const responseToCache = networkResponse.clone()
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseToCache)
+              })
+            }
+            return networkResponse
+          })
+          .catch(() => {
+            return caches.match(event.request).then((cached) => {
+              if (cached) return cached
+              return caches.match('./index.html')
+            })
+          })
+      )
+      return
+    }
+
+    // Para assets inmutables / estáticos (.js, .css, .svg, fuentes), estrategia Cache-First con actualización
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) {
@@ -145,7 +196,6 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 
         return fetch(event.request)
           .then((networkResponse) => {
-            // Solo cachear respuestas válidas de contenidos estáticos
             if (
               !networkResponse ||
               networkResponse.status !== 200 ||
@@ -173,5 +223,5 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isStaticRequest, CACHE_NAME, APP_SHELL, STATIC_EXTENSIONS, STATIC_DESTINATIONS }
+  module.exports = { isStaticRequest, isNavigationRequest, CACHE_NAME, APP_SHELL, STATIC_EXTENSIONS, STATIC_DESTINATIONS }
 }

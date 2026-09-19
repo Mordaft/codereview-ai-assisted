@@ -1,0 +1,12 @@
+import{m as e}from"./index-4Tn6WFmW.js";var t,n=!1;function r(t){let n=document.querySelector(`#pwa-update-toast`);n||(n=document.createElement(`div`),n.id=`pwa-update-toast`,n.className=`pwa-update-toast`,n.setAttribute(`role`,`alert`),document.body.appendChild(n)),n.innerHTML=`
+    <div class="pwa-update-toast__content">
+      <span class="pwa-update-toast__icon" aria-hidden="true">✦</span>
+      <span class="pwa-update-toast__text font-medium text-sm">${e(`pwa.updateAvailable`)}</span>
+    </div>
+    <div class="pwa-update-toast__actions">
+      <button id="pwa-update-action" class="pwa-update-toast__btn primary-action text-xs" type="button">
+        ${e(`pwa.updateBtn`)}
+      </button>
+      <button id="pwa-update-dismiss" class="pwa-update-toast__close" type="button" aria-label="${e(`common.close`)}">×</button>
+    </div>
+  `,n.classList.add(`pwa-update-toast--visible`),document.querySelector(`#pwa-update-dismiss`)?.addEventListener(`click`,()=>{n?.classList.remove(`pwa-update-toast--visible`)}),document.querySelector(`#pwa-update-action`)?.addEventListener(`click`,()=>{let n=document.querySelector(`#pwa-update-action`);n&&(n.disabled=!0,n.textContent=e(`pwa.updating`)),t.waiting?t.waiting.postMessage({type:`SKIP_WAITING`}):window.location.reload(),setTimeout(()=>{window.location.reload()},1200)})}async function i(){if(!(`serviceWorker`in navigator))return{hasUpdate:!1,message:e(`pwa.upToDate`)};if(!t)try{t=await navigator.serviceWorker.getRegistration()}catch{return{hasUpdate:!1,message:e(`pwa.upToDate`)}}if(!t)return{hasUpdate:!1,message:e(`pwa.upToDate`)};try{return await t.update(),t.waiting?(r(t),{hasUpdate:!0,message:e(`pwa.updateAvailable`)}):{hasUpdate:!1,message:e(`pwa.upToDate`)}}catch{return{hasUpdate:!1,message:e(`pwa.upToDate`)}}}async function a(){if(`serviceWorker`in navigator){navigator.serviceWorker.addEventListener(`controllerchange`,()=>{n||(n=!0,window.location.reload())});try{t=await navigator.serviceWorker.register(`./sw.js`,{updateViaCache:`none`}),t.waiting&&r(t),t.addEventListener(`updatefound`,()=>{let e=t?.installing;e&&e.addEventListener(`statechange`,()=>{e.state===`installed`&&navigator.serviceWorker.controller&&t&&r(t)})}),window.addEventListener(`focus`,()=>{t?.update()}),document.addEventListener(`visibilitychange`,()=>{document.visibilityState===`visible`&&t?.update()}),setInterval(()=>{t?.update()},9e5)}catch(e){console.warn(`[PWA] Error registrando Service Worker con actualización:`,e)}}}export{i as checkForUpdates,a as initPwaUpdate};

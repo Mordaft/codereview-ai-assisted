@@ -603,7 +603,7 @@ html.dark .distribution-fill--gitlab {
 }
 
 .heatmap-cell {
-  cursor: pointer;
+  cursor: default;
   transition: opacity .15s ease, stroke .15s ease;
 }
 

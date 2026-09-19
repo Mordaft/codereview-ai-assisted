@@ -38,9 +38,9 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
   const githubStrokeDash = (githubPct / 100) * circumference
   const gitlabStrokeDash = (gitlabPct / 100) * circumference
 
-  // 2. Activity Heatmap calculation
+  // 2. Activity Heatmap calculation (Full 1-year period, e.g. Oct 2025 to Sep 2026)
   const today = new Date()
-  const weeksCount = 20
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999)
   const dayMs = 24 * 60 * 60 * 1000
 
   const countByDate = new Map<string, number>()
@@ -57,13 +57,24 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
     }
   }
 
-  const todayDayOfWeek = today.getDay()
-  const daysUntilEndOfWeek = 6 - todayDayOfWeek
-  const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + daysUntilEndOfWeek)
-  const totalDays = weeksCount * 7
-  const startDate = new Date(endDate.getTime() - (totalDays - 1) * dayMs)
+  // Full 10-month period: 10 full months ending at current month
+  // e.g. If today is Sep 19, 2026: periodStart = 2025-12-01, periodEnd = 2026-09-30 (Dec 2025 to Sep 2026)
+  const curYear = today.getFullYear()
+  const curMonth = today.getMonth()
+  const periodStart = new Date(curYear, curMonth - 9, 1)
+  const periodEnd = new Date(curYear, curMonth + 1, 0, 23, 59, 59, 999)
 
-  const cellSize = 11
+  const startDayOfWeek = periodStart.getDay()
+  const gridStartDate = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() - startDayOfWeek)
+
+  const endDayOfWeek = periodEnd.getDay()
+  const daysUntilEndOfWeek = 6 - endDayOfWeek
+  const gridEndDate = new Date(periodEnd.getFullYear(), periodEnd.getMonth(), periodEnd.getDate() + daysUntilEndOfWeek)
+
+  const totalDays = Math.round((gridEndDate.getTime() - gridStartDate.getTime()) / dayMs) + 1
+  const weeksCount = Math.ceil(totalDays / 7)
+
+  const cellSize = 10
   const cellGap = 3
   const step = cellSize + cellGap
   const leftPadding = 30
@@ -79,40 +90,45 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
   const dayLabelsEn = ['', 'Mon', '', 'Wed', '', 'Fri', '']
   const dayLabels = getLanguage() === 'es' ? dayLabelsEs : dayLabelsEn
 
-  let cur = new Date(startDate.getTime())
+  let cur = new Date(gridStartDate.getTime())
   let cellsSvg = ''
   let monthsSvg = ''
-  let lastMonth = -1
+  const monthsRendered = new Set<string>()
 
   for (let w = 0; w < weeksCount; w++) {
     const x = leftPadding + w * step
     for (let d = 0; d < 7; d++) {
       const y = topPadding + d * step
-      const curYear = cur.getFullYear()
-      const curMonth = cur.getMonth()
-      const curDateNum = cur.getDate()
-      const dateKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(curDateNum).padStart(2, '0')}`
+      const cYear = cur.getFullYear()
+      const cMonth = cur.getMonth()
+      const cDateNum = cur.getDate()
+      const dateKey = `${cYear}-${String(cMonth + 1).padStart(2, '0')}-${String(cDateNum).padStart(2, '0')}`
 
-      if (d === 0 && curMonth !== lastMonth) {
-        monthsSvg += `<text x="${x}" y="${topPadding - 6}" class="heatmap-text">${monthNames[curMonth]}</text>`
-        lastMonth = curMonth
+      const isWithinPeriod = cur >= periodStart && cur <= periodEnd
+
+      if (isWithinPeriod) {
+        const monthKey = `${cYear}-${cMonth}`
+        if (!monthsRendered.has(monthKey)) {
+          monthsRendered.add(monthKey)
+          monthsSvg += `<text x="${x}" y="${topPadding - 6}" class="heatmap-text">${monthNames[cMonth]}</text>`
+        }
+
+        const isFuture = cur.getTime() > todayMidnight.getTime()
+        const count = isFuture ? 0 : (countByDate.get(dateKey) ?? 0)
+        let level = 0
+        if (!isFuture && count > 0) {
+          if (count === 1) level = 1
+          else if (count === 2) level = 2
+          else if (count <= 4) level = 3
+          else level = 4
+        }
+
+        const tooltip = count > 0
+          ? t('history.reviewsOnDate', { count, date: dateKey })
+          : t('history.noReviewsOnDate', { date: dateKey })
+
+        cellsSvg += `<rect class="heatmap-cell heatmap-cell--level-${level} ${isFuture ? 'heatmap-cell--future' : ''}" x="${x}" y="${y}" width="${cellSize}" height="${cellSize}" rx="2" ry="2"><title>${tooltip}</title></rect>`
       }
-
-      const isFuture = cur.getTime() > today.getTime()
-      const count = isFuture ? 0 : (countByDate.get(dateKey) ?? 0)
-      let level = 0
-      if (!isFuture && count > 0) {
-        if (count === 1) level = 1
-        else if (count === 2) level = 2
-        else if (count <= 4) level = 3
-        else level = 4
-      }
-
-      const tooltip = count > 0
-        ? t('history.reviewsOnDate', { count, date: dateKey })
-        : t('history.noReviewsOnDate', { date: dateKey })
-
-      cellsSvg += `<rect class="heatmap-cell heatmap-cell--level-${level} ${isFuture ? 'heatmap-cell--future' : ''}" x="${x}" y="${y}" width="${cellSize}" height="${cellSize}" rx="2" ry="2"><title>${tooltip}</title></rect>`
 
       cur = new Date(cur.getTime() + dayMs)
     }
@@ -258,14 +274,12 @@ export function renderHistory(app: HTMLElement, options: HistoryOptions) {
                   ${cellsSvg}
                 </svg>
               </div>
-              <div class="heatmap-legend">
-                <span class="heatmap-legend-label">${t('history.legendLess')}</span>
+              <div class="heatmap-legend" aria-hidden="true">
                 <span class="heatmap-legend-cell heatmap-cell--level-0"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-1"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-2"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-3"></span>
                 <span class="heatmap-legend-cell heatmap-cell--level-4"></span>
-                <span class="heatmap-legend-label">${t('history.legendMore')}</span>
               </div>
             </div>
           </section>

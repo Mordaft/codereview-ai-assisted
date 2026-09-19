@@ -13,6 +13,16 @@ export default defineConfig({
               test: /[\\/]node_modules[\\/]dexie/,
               priority: 10,
             },
+            {
+              name: 'langgraph',
+              test: /[\\/]node_modules[\\/]@langchain[\\/]langgraph/,
+              priority: 30,
+            },
+            {
+              name: 'langchain-core',
+              test: /[\\/]node_modules[\\/](?:@langchain[\\/]core|langsmith)/,
+              priority: 20,
+            },
           ],
         },
       },

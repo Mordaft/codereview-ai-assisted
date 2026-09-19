@@ -345,15 +345,38 @@ html.dark .primary-action--danger:hover:not(:disabled) {
 
 .thinking-snippet {
   margin: 0;
-  font-family: ui-monospace, monospace;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #ebf3ea;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
-  line-height: 1.5;
-  color: #273b32;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  line-height: 1.6;
+  color: #243a2f;
+  max-height: 180px;
+  min-height: 80px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
   word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd8ce transparent;
+}
+
+.thinking-snippet::-webkit-scrollbar {
+  width: 5px;
+}
+
+.thinking-snippet::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-snippet::-webkit-scrollbar-thumb {
+  background: #cbd8ce;
+  border-radius: 4px;
+}
+
+.thinking-snippet::-webkit-scrollbar-thumb:hover {
+  background: #aabeb0;
 }
 
 .status--thinking {
@@ -375,7 +398,17 @@ html.dark .thinking-badge {
 }
 
 html.dark .thinking-snippet {
-  color: #bdd1c5;
+  background: #131e1a;
+  color: #c5d9cd;
+  scrollbar-color: #31473d transparent;
+}
+
+html.dark .thinking-snippet::-webkit-scrollbar-thumb {
+  background: #31473d;
+}
+
+html.dark .thinking-snippet::-webkit-scrollbar-thumb:hover {
+  background: #415f51;
 }
 
 html.dark .status--thinking {

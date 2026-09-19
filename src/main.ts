@@ -203,7 +203,7 @@ function reviewCard(review: Review) {
           <span class="thinking-label">${thinking?.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')}</span>
           <span class="thinking-file" title="${fileInfo}">${fileInfo}</span>
         </div>
-        <p class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</p>
+        <div class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</div>
       </div>
     `
     : ''
@@ -633,6 +633,12 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
     if (!review) return
     navigate(`#/reviews/${review.id}`)
   }))
+  document.querySelectorAll<HTMLElement>('.review-card__thinking').forEach((thinkingContainer) => {
+    thinkingContainer.addEventListener('click', (event) => event.stopPropagation())
+    thinkingContainer.addEventListener('pointerdown', (event) => event.stopPropagation())
+    const snippet = thinkingContainer.querySelector<HTMLElement>('.thinking-snippet')
+    if (snippet) snippet.scrollTop = snippet.scrollHeight
+  })
 }
 
 async function start() {
@@ -676,14 +682,19 @@ async function start() {
                   <span class="thinking-label">${labelText}</span>
                   <span class="thinking-file" title="${fileInfo}">${fileInfo}</span>
                 </div>
-                <p class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</p>
+                <div class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</div>
               </div>
             `)
+            thinkingContainer = card.querySelector<HTMLElement>('.review-card__thinking')
+            thinkingContainer?.addEventListener('click', (event) => event.stopPropagation())
+            thinkingContainer?.addEventListener('pointerdown', (event) => event.stopPropagation())
+            const snippetElem = thinkingContainer?.querySelector<HTMLElement>('.thinking-snippet')
+            if (snippetElem) snippetElem.scrollTop = snippetElem.scrollHeight
           }
         } else {
           const labelElem = thinkingContainer.querySelector('.thinking-label')
           const fileElem = thinkingContainer.querySelector('.thinking-file')
-          const snippetElem = thinkingContainer.querySelector('.thinking-snippet')
+          const snippetElem = thinkingContainer.querySelector<HTMLElement>('.thinking-snippet')
           if (labelElem) labelElem.textContent = labelText
           if (fileElem) {
             fileElem.textContent = fileInfo
@@ -692,6 +703,7 @@ async function start() {
           if (snippetElem) {
             snippetElem.textContent = thoughtText
             snippetElem.setAttribute('title', thoughtText)
+            snippetElem.scrollTop = snippetElem.scrollHeight
           }
         }
 

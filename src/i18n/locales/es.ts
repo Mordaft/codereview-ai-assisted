@@ -51,6 +51,10 @@ export const es: TranslationDictionary = {
     card: {
       commentsCount: '{count} comentarios',
       progressAria: 'Progreso {progress}%',
+      slmThinking: 'Razonando...',
+      analyzingCode: 'Evaluando principios SOLID y seguridad...',
+      generatingProposals: 'Generando propuestas...',
+      fileProgress: 'Fichero {current} de {total}',
     },
     empty: {
       closedTitle: 'No hay revisiones cerradas',

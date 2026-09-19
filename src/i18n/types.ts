@@ -51,6 +51,10 @@ export interface TranslationDictionary {
     card: {
       commentsCount: string
       progressAria: string
+      slmThinking: string
+      analyzingCode: string
+      generatingProposals: string
+      fileProgress: string
     }
     empty: {
       closedTitle: string

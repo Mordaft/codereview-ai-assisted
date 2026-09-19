@@ -4,7 +4,7 @@ import { trace } from './diagnostics'
 import { getRemoteChange, listRemoteComments, listRemoteFiles, publishRemoteComment } from './platform-api'
 import { detectPlatform, parseReviewUrl } from './platform-url'
 import { addManualReviewComment, createReview, deleteReviewComment, getReviewKpis, listReviewComments, listReviews, markReviewCommentPublished, updateReviewComment, updateReviewStatus, type Review, type ReviewStatus } from './review-db'
-import { onReviewProgress } from './review-events'
+import { getReviewThinking, onReviewProgress, onReviewThinking } from './review-events'
 import { getSlmConfig, saveSlmConfig, testSlmConnection, type SlmConfig } from './slm-config'
 import { getReviewPromptConfig, reviewOutputContract, saveReviewPromptConfig } from './review-prompts'
 import {
@@ -184,10 +184,35 @@ async function publishPendingComments(review: Review) {
 
 function reviewCard(review: Review) {
   const timeLabel = formatRelativeTime(review.createdAt || review.updated)
+  const thinking = review.id ? getReviewThinking(review.id) : undefined
+  const isThinking = Boolean(thinking && thinking.phase !== 'completed')
+  const statusDisplay = isThinking
+    ? `<span class="status status--thinking"><span class="thinking-pulse"></span>${thinking?.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')}</span>`
+    : `<span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>`
+
+  const fileInfo = thinking?.filePath
+    ? `${thinking.filePath}${thinking.fileIndex && thinking.totalFiles ? ` (${thinking.fileIndex}/${thinking.totalFiles})` : ''}`
+    : ''
+  const thoughtText = thinking?.thought ? thinking.thought : t('reviews.card.analyzingCode')
+
+  const thinkingBlock = isThinking
+    ? `
+      <div class="review-card__thinking" data-thinking-for="${review.id}">
+        <div class="thinking-badge">
+          <span class="thinking-pulse" aria-hidden="true"></span>
+          <span class="thinking-label">${thinking?.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')}</span>
+          <span class="thinking-file" title="${fileInfo}">${fileInfo}</span>
+        </div>
+        <p class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</p>
+      </div>
+    `
+    : ''
+
   return `
     <button class="review-card bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark" data-review-id="${review.id}" type="button">
-      <div class="review-card__topline"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span></div>
+      <div class="review-card__topline"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span>${statusDisplay}</div>
       <h3>${review.title}</h3><p class="repository">${review.repository}</p>
+      ${thinkingBlock}
       <div class="progress" aria-label="${t('reviews.card.progressAria', { progress: review.progress })}"><span style="width: ${review.progress}%"></span></div>
       <div class="review-card__meta"><span>${t('reviews.card.commentsCount', { count: review.comments })}</span><span>${timeLabel}</span></div>
     </button>
@@ -229,7 +254,13 @@ async function renderReviewWorkspace(review: Review, activeFileIndex = 0) {
     list.push(comment)
     fileCommentsMap.set(comment.file, list)
   }
-  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions"><span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
+  const thinking = review.id ? getReviewThinking(review.id) : undefined
+  const isThinking = Boolean(thinking && thinking.phase !== 'completed')
+  const statusDisplay = isThinking
+    ? `<span class="status status--thinking"><span class="thinking-pulse"></span>${thinking?.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')}</span>`
+    : `<span class="status status--${statusClass(review.status)}"><span></span>${tStatus(review.status)}</span>`
+
+  app.innerHTML = `<div class="review-workspace bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark"><header class="workspace-header bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><button class="back-button text-brand-muted-light dark:!text-brand-muted-dark hover:text-brand-primary-light dark:hover:!text-brand-primary-dark" id="back-to-reviews" type="button">${t('common.backToReviews')}</button><div class="workspace-title"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span><strong class="text-brand-primary-light dark:!text-brand-primary-dark">${review.title}</strong><span class="workspace-repository text-brand-muted-light dark:!text-brand-muted-dark">${review.repository}</span></div><div class="workspace-actions">${statusDisplay}${isReviewLocked ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>` : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`}${renderLangToggle('workspace-lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header><div class="workspace-grid"><aside class="file-tree bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div><div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>${workspaceFiles.map((file, index) => {
     const fileComments = fileCommentsMap.get(file.path) ?? []
     const commentCount = fileComments.length
     const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH || (comment.severity as unknown) === 'alta')
@@ -613,6 +644,81 @@ async function start() {
   onReviewProgress(async () => {
     await refreshReviews()
     if (currentScreen === AppScreen.REVIEWS && !selectedReviewId) render(currentFilter)
+  })
+  onReviewThinking((thinking) => {
+    const card = document.querySelector<HTMLElement>(`.review-card[data-review-id="${thinking.reviewId}"]`)
+    if (card) {
+      if (thinking.phase === 'completed') {
+        card.querySelector('.review-card__thinking')?.remove()
+        const review = reviews.find((r) => r.id === thinking.reviewId)
+        if (review) {
+          const statusElem = card.querySelector('.status')
+          if (statusElem) {
+            statusElem.className = `status status--${statusClass(review.status)}`
+            statusElem.innerHTML = `<span></span>${tStatus(review.status)}`
+          }
+        }
+      } else {
+        const fileInfo = thinking.filePath
+          ? `${thinking.filePath}${thinking.fileIndex && thinking.totalFiles ? ` (${thinking.fileIndex}/${thinking.totalFiles})` : ''}`
+          : ''
+        const thoughtText = thinking.thought ? thinking.thought : t('reviews.card.analyzingCode')
+        const labelText = thinking.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')
+
+        let thinkingContainer = card.querySelector<HTMLElement>('.review-card__thinking')
+        if (!thinkingContainer) {
+          const progressElem = card.querySelector('.progress')
+          if (progressElem) {
+            progressElem.insertAdjacentHTML('beforebegin', `
+              <div class="review-card__thinking" data-thinking-for="${thinking.reviewId}">
+                <div class="thinking-badge">
+                  <span class="thinking-pulse" aria-hidden="true"></span>
+                  <span class="thinking-label">${labelText}</span>
+                  <span class="thinking-file" title="${fileInfo}">${fileInfo}</span>
+                </div>
+                <p class="thinking-snippet" title="${thoughtText.replaceAll('"', '&quot;')}">${thoughtText.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</p>
+              </div>
+            `)
+          }
+        } else {
+          const labelElem = thinkingContainer.querySelector('.thinking-label')
+          const fileElem = thinkingContainer.querySelector('.thinking-file')
+          const snippetElem = thinkingContainer.querySelector('.thinking-snippet')
+          if (labelElem) labelElem.textContent = labelText
+          if (fileElem) {
+            fileElem.textContent = fileInfo
+            fileElem.setAttribute('title', fileInfo)
+          }
+          if (snippetElem) {
+            snippetElem.textContent = thoughtText
+            snippetElem.setAttribute('title', thoughtText)
+          }
+        }
+
+        const statusElem = card.querySelector('.status')
+        if (statusElem) {
+          statusElem.className = 'status status--thinking'
+          statusElem.innerHTML = `<span class="thinking-pulse"></span>${labelText}`
+        }
+      }
+    }
+
+    if (selectedReviewId === thinking.reviewId) {
+      const workspaceStatusElem = document.querySelector('.workspace-actions .status')
+      if (workspaceStatusElem) {
+        if (thinking.phase === 'completed') {
+          const review = reviews.find((r) => r.id === thinking.reviewId)
+          if (review) {
+            workspaceStatusElem.className = `status status--${statusClass(review.status)}`
+            workspaceStatusElem.innerHTML = `<span></span>${tStatus(review.status)}`
+          }
+        } else {
+          const labelText = thinking.phase === 'suggesting' ? t('reviews.card.generatingProposals') : t('reviews.card.slmThinking')
+          workspaceStatusElem.className = 'status status--thinking'
+          workspaceStatusElem.innerHTML = `<span class="thinking-pulse"></span>${labelText}`
+        }
+      }
+    }
   })
   onLanguageChange(() => {
     if (currentScreen === AppScreen.SETTINGS) {

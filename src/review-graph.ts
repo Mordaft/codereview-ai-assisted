@@ -8,7 +8,7 @@ import {
 import { clearSlmSuggestions, listReviewFiles, saveSlmSuggestions, updateReviewProgress, updateReviewStatus } from './review-db'
 import { analyzeFileWithSlm } from './slm-client'
 import { selectAnalyzableReviewFiles } from './review-scope'
-import { emitReviewProgress } from './review-events'
+import { emitReviewProgress, emitReviewThinking } from './review-events'
 import { trace } from './diagnostics'
 import {
   type CommentSeverity,
@@ -60,12 +60,39 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
   const suggestions: ReviewSuggestion[] = []
   for (const [index, file] of analyzableFiles.entries()) {
     trace('slm.file.start', { reviewId: state.reviewId, filePath: file.path })
-    const fileSuggestions = await analyzeFileWithSlm(file, async (streamedSuggestion) => {
-      if (streamedSuggestion.filePath === file.path) {
-        await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
-        emitReviewProgress(state.reviewId)
-      }
+    emitReviewThinking({
+      reviewId: state.reviewId,
+      filePath: file.path,
+      fileIndex: index + 1,
+      totalFiles: analyzableFiles.length,
+      phase: 'thinking',
     })
+    const fileSuggestions = await analyzeFileWithSlm(
+      file,
+      async (streamedSuggestion) => {
+        if (streamedSuggestion.filePath === file.path) {
+          await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
+          emitReviewThinking({
+            reviewId: state.reviewId,
+            filePath: file.path,
+            fileIndex: index + 1,
+            totalFiles: analyzableFiles.length,
+            phase: 'suggesting',
+          })
+          emitReviewProgress(state.reviewId)
+        }
+      },
+      (thought) => {
+        emitReviewThinking({
+          reviewId: state.reviewId,
+          filePath: file.path,
+          fileIndex: index + 1,
+          totalFiles: analyzableFiles.length,
+          thought,
+          phase: 'thinking',
+        })
+      },
+    )
     const validSuggestions = fileSuggestions.filter((suggestion) => suggestion.filePath === file.path)
     suggestions.push(...validSuggestions)
     await saveSlmSuggestions(state.reviewId, validSuggestions)
@@ -73,6 +100,10 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
     emitReviewProgress(state.reviewId)
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })
   }
+  emitReviewThinking({
+    reviewId: state.reviewId,
+    phase: 'completed',
+  })
   await updateReviewStatus(state.reviewId, ReviewStatus.IN_PROGRESS)
   emitReviewProgress(state.reviewId)
   return {

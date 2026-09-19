@@ -51,6 +51,10 @@ export const en: TranslationDictionary = {
     card: {
       commentsCount: '{count} comments',
       progressAria: 'Progress {progress}%',
+      slmThinking: 'Thinking...',
+      analyzingCode: 'Evaluating SOLID principles and security...',
+      generatingProposals: 'Generating proposals...',
+      fileProgress: 'File {current} of {total}',
     },
     empty: {
       closedTitle: 'No closed reviews',

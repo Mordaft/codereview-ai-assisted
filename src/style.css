@@ -272,3 +272,113 @@ html.dark .primary-action--danger:hover:not(:disabled) {
   color: #ffffff;
 }
 
+/* SLM Thinking Pill Styles */
+.review-card__thinking {
+  margin: 14px 0 16px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: #f3f7f2;
+  border: 1px solid #d8e5da;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 11px;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.review-card__thinking::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #87b743, #c4f36b, transparent);
+  animation: thinking-shimmer 2.2s linear infinite;
+}
+
+@keyframes thinking-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.thinking-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #558729;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thinking-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #81b64c;
+  box-shadow: 0 0 8px #81b64c;
+  animation: thinking-pulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes thinking-pulse {
+  from { opacity: 0.45; transform: scale(0.85); box-shadow: 0 0 4px #81b64c; }
+  to { opacity: 1; transform: scale(1.15); box-shadow: 0 0 10px #9be04e; }
+}
+
+.thinking-file {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
+.thinking-snippet {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #273b32;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.status--thinking {
+  color: #558729;
+}
+
+.status--thinking span {
+  background: #81b64c;
+  animation: thinking-pulse 1.4s ease-in-out infinite alternate;
+}
+
+html.dark .review-card__thinking {
+  background: #192722;
+  border-color: #2b3d35;
+}
+
+html.dark .thinking-badge {
+  color: #b1df63;
+}
+
+html.dark .thinking-snippet {
+  color: #bdd1c5;
+}
+
+html.dark .status--thinking {
+  color: #b1df63;
+}
+

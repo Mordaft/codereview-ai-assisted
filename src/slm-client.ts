@@ -170,6 +170,7 @@ function systemPrompt(instructions: string) {
 async function requestFileAnalysis(
   file: StoredReviewFile,
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
+  onThinking?: (thought: string) => void | Promise<void>,
 ): Promise<SlmSuggestion[]> {
   const config = getSlmConfig()
   const prompts = getReviewPromptConfig()
@@ -188,11 +189,8 @@ async function requestFileAnalysis(
       max_completion_tokens: config.maxTokens,
       stream: true,
       verbosity: 'low',
-      reasoning: {
-        effort: 'minimal',
-      },
       chat_template_kwargs: {
-        enable_thinking: false,
+        enable_thinking: true,
       },
       response_format: {
         type: 'json_schema',
@@ -247,6 +245,7 @@ async function requestFileAnalysis(
   let finishReason: string | null = null
   let reasoningChars = 0
   let contentChars = 0
+  let accumulatedThought = ''
 
   let inThinkTag = false
   let thinkTagBuffer = ''
@@ -277,18 +276,29 @@ async function requestFileAnalysis(
       } else {
         const closeIdx = combined.indexOf('</think>')
         if (closeIdx !== -1) {
+          const thinkChunk = combined.slice(0, closeIdx)
+          accumulatedThought += thinkChunk
           reasoningChars += closeIdx
           inThinkTag = false
           combined = combined.slice(closeIdx + 8)
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
         } else {
           const possiblePartial = combined.match(/<\/t(?:h(?:i(?:n(?:k)?)?)?)?$/)
           if (possiblePartial && possiblePartial.index !== undefined) {
+            const thinkChunk = combined.slice(0, possiblePartial.index)
+            accumulatedThought += thinkChunk
             reasoningChars += possiblePartial.index
             thinkTagBuffer = possiblePartial[0]
             combined = ''
           } else {
+            accumulatedThought += combined
             reasoningChars += combined.length
             combined = ''
+          }
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
           }
         }
       }
@@ -353,9 +363,17 @@ async function requestFileAnalysis(
         if (!delta) continue
 
         if (delta.reasoning_content) {
+          accumulatedThought += delta.reasoning_content
           reasoningChars += delta.reasoning_content.length
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
         } else if (delta.reasoning) {
+          accumulatedThought += delta.reasoning
           reasoningChars += delta.reasoning.length
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
         }
 
         if (delta.content) {
@@ -378,7 +396,11 @@ async function requestFileAnalysis(
       contentBuffer += thinkTagBuffer
       contentChars += thinkTagBuffer.length
     } else {
+      accumulatedThought += thinkTagBuffer
       reasoningChars += thinkTagBuffer.length
+      if (onThinking) {
+        try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+      }
     }
   }
 
@@ -430,10 +452,11 @@ async function requestFileAnalysis(
 export async function analyzeFileWithSlm(
   file: StoredReviewFile,
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>,
+  onThinking?: (thought: string) => void | Promise<void>,
 ) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const suggestions = await requestFileAnalysis(file, onSuggestion)
+      const suggestions = await requestFileAnalysis(file, onSuggestion, onThinking)
       trace('slm.file.parsed', { filePath: file.path, attempt, suggestions: suggestions.length })
       return suggestions
     } catch (error) {

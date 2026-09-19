@@ -2,14 +2,12 @@ export interface ReviewPromptConfig {
   reviewInstructions: string
 }
 
-export const defaultReviewInstructions = `Analiza el código aplicando principios SOLID y prácticas de seguridad.
+export const defaultReviewInstructions = `Analiza el código respecto a la aplicación de principios SOLID y prácticas de seguridad en el mismo.
 Identifica únicamente problemas concretos, justificables y accionables.
 Prioriza vulnerabilidades, errores de diseño, riesgos de mantenimiento y defectos funcionales.
 No inventes contexto que no esté presente en el código o en la configuración.
-Genera como máximo 5 propuestas para este fichero.
 Cada propuesta debe referirse a una línea concreta que contenga o provoque el problema.
 No repitas la misma observación en varias líneas: si un problema afecta a muchas líneas, informa solo de la línea más representativa.
-No generes recomendaciones genéricas, de estilo superficial o aplicables indistintamente a todas las líneas.
 Si no existe un problema concreto, devuelve una lista suggestions vacía.
 Vincula cada hallazgo al fichero y línea exactos.`
 

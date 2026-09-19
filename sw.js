@@ -1,4 +1,4 @@
-const SW_VERSION = '1789818203632'
+const SW_VERSION = '1789819871990'
 const CACHE_NAME = `codereview-shell-${SW_VERSION}`
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
 
@@ -79,6 +79,15 @@ function isStaticRequest(request) {
     pathname.includes('/v1/') ||
     pathname.includes('/v4/') ||
     pathname.includes('/graphql')
+  ) {
+    return false
+  }
+
+  // Excluir peticiones internas de desarrollo y HMR de Vite
+  if (
+    pathname.startsWith('/@') ||
+    pathname.includes('/@vite/') ||
+    url.searchParams.has('token')
   ) {
     return false
   }

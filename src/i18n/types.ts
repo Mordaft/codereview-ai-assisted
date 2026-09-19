@@ -31,6 +31,7 @@ export interface TranslationDictionary {
     heroTitle: string
     heroSubtitle: string
     newReview: string
+    reviewInProgressTooltip: string
     stats: {
       inProgress: string
       activeReviews: string

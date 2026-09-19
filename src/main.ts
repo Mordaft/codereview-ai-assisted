@@ -507,6 +507,23 @@ function renderSettings() {
   })
 }
 
+function isReviewProcessing(review: Review): boolean {
+  if (
+    review.status === ReviewStatusConst.IN_PREPARATION ||
+    (review.status as unknown) === 'En preparacion' ||
+    (review.status as unknown) === 'inPreparation'
+  ) {
+    return true
+  }
+  if (review.id) {
+    const thinking = getReviewThinking(review.id)
+    if (thinking && thinking.phase !== 'completed') {
+      return true
+    }
+  }
+  return false
+}
+
 function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
   if (currentScreen === AppScreen.SETTINGS) {
     renderSettings()
@@ -519,6 +536,7 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
   }
   const isClosedReview = (review: Review) => review.status === ReviewStatusConst.CLOSED || review.status === ReviewStatusConst.APPROVED || (review.status as unknown) === 'Cerrada' || (review.status as unknown) === 'Aprobada'
   const visibleReviews = reviews.filter((review) => filter === ReviewFilter.CLOSED ? isClosedReview(review) : !isClosedReview(review))
+  const isAnyReviewProcessing = reviews.some(isReviewProcessing)
   const accessTokenField = hasRepositoryAccessToken()
     ? ''
     : `<label for="repository-token">${t('dialogs.connect.tokenLabel')}</label><input id="repository-token" name="repository-token" type="password" autocomplete="off" placeholder="${t('dialogs.connect.tokenPlaceholder')}" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><small class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.tokenHint')}</small>`
@@ -532,7 +550,7 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
       </aside>
       <main class="content bg-brand-canvas-light text-brand-primary-light dark:!bg-brand-canvas-dark dark:!text-brand-primary-dark">
         <header class="topbar"><div><span class="eyebrow">${t('reviews.eyebrow')}</span><h1>${t('reviews.title')}</h1></div><div class="flex items-center gap-2">${renderLangToggle('lang-toggle')}<button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button></div></header>
-        <section class="intro bg-brand-secondary-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="intro__lead"><span class="intro__emblem" aria-hidden="true">${renderBrandLogoSvg(46, 'hero')}</span><div><h2>${t('reviews.heroTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heroSubtitle')}</p></div></div><button class="primary-action" id="new-review" type="button"><span>+</span> ${t('reviews.newReview')}</button></section>
+        <section class="intro bg-brand-secondary-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark"><div class="intro__lead"><span class="intro__emblem" aria-hidden="true">${renderBrandLogoSvg(46, 'hero')}</span><div><h2>${t('reviews.heroTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heroSubtitle')}</p></div></div><button class="primary-action" id="new-review" type="button" ${isAnyReviewProcessing ? `disabled title="${t('reviews.reviewInProgressTooltip')}"` : ''}><span>+</span> ${t('reviews.newReview')}</button></section>
         <section class="stats" aria-label="${t('reviews.title')}"><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.inProgress')}</span><strong>${reviewKpis.activeReviews}</strong><span class="stat__detail stat__detail--positive">${t('reviews.stats.activeReviews')}</span></div><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.pendingSlm')}</span><strong>${reviewKpis.pendingSlmComments}</strong><span class="stat__detail text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.proposalsToReview')}</span></div><div class="stat bg-brand-surface-light dark:!bg-brand-surface-dark"><span class="stat__label text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.stats.publishedComments')}</span><strong>${reviewKpis.publishedComments}</strong><span class="stat__detail stat__detail--positive">${t('reviews.stats.total')}</span></div></section>
         <div class="section-heading"><div><h2>${filter === ReviewFilter.CLOSED ? t('reviews.heading.closedTitle') : t('reviews.heading.activeTitle')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('reviews.heading.registeredCount', { count: visibleReviews.length })}</p></div><div class="tabs" role="tablist"><button class="tab ${filter === ReviewFilter.ACTIVE ? 'tab--active' : ''}" data-filter="${ReviewFilter.ACTIVE}" type="button">${t('reviews.tabs.active')}</button><button class="tab ${filter === ReviewFilter.CLOSED ? 'tab--active' : ''}" data-filter="${ReviewFilter.CLOSED}" type="button">${t('reviews.tabs.closed')}</button></div></div>
         <section class="review-list">${visibleReviews.length ? visibleReviews.map(reviewCard).join('') : `<div class="empty-state border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><strong>${filter === ReviewFilter.CLOSED ? t('reviews.empty.closedTitle') : t('reviews.empty.activeTitle')}</strong><span>${filter === ReviewFilter.CLOSED ? t('reviews.empty.closedText') : t('reviews.empty.activeText')}</span></div>`}</section>
@@ -586,6 +604,7 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
   reviewUrlInput?.addEventListener('change', updateUrlPreview)
 
   document.querySelector('#new-review')?.addEventListener('click', () => {
+    if (reviews.some(isReviewProcessing)) return
     updateUrlPreview()
     document.querySelector<HTMLDialogElement>('#new-review-dialog')?.showModal()
   })
@@ -594,6 +613,10 @@ function render(filter: ReviewFilter = ReviewFilter.ACTIVE) {
   document.querySelector('#lang-toggle')?.addEventListener('click', () => toggleLanguage())
   document.querySelector<HTMLFormElement>('#new-review-form')?.addEventListener('submit', async (event) => {
     event.preventDefault()
+    if (reviews.some(isReviewProcessing)) {
+      window.alert(t('reviews.reviewInProgressTooltip'))
+      return
+    }
     const form = event.currentTarget as HTMLFormElement
     const url = new FormData(form).get('review-url')
     if (typeof url !== 'string' || !url) return
@@ -652,6 +675,16 @@ async function start() {
     if (currentScreen === AppScreen.REVIEWS && !selectedReviewId) render(currentFilter)
   })
   onReviewThinking((thinking) => {
+    const newReviewButton = document.querySelector<HTMLButtonElement>('#new-review')
+    if (newReviewButton) {
+      const isProcessing = thinking.phase !== 'completed' || reviews.some(isReviewProcessing)
+      newReviewButton.disabled = isProcessing
+      if (isProcessing) {
+        newReviewButton.title = t('reviews.reviewInProgressTooltip')
+      } else {
+        newReviewButton.removeAttribute('title')
+      }
+    }
     const card = document.querySelector<HTMLElement>(`.review-card[data-review-id="${thinking.reviewId}"]`)
     if (card) {
       if (thinking.phase === 'completed') {

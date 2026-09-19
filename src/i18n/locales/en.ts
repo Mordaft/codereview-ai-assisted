@@ -30,7 +30,8 @@ export const en: TranslationDictionary = {
     title: 'Reviews',
     heroTitle: 'Review with criteria, decide with clarity.',
     heroSubtitle: 'Orchestrate local AI analysis and human review in a single workspace.',
-    newReview: '+ New review',
+    newReview: 'New review',
+    reviewInProgressTooltip: 'A review is currently in progress. Please wait until it completes before starting another.',
     stats: {
       inProgress: 'In progress',
       activeReviews: 'Active reviews',
@@ -112,7 +113,7 @@ export const en: TranslationDictionary = {
     approveLocally: 'Approve locally',
     modifiedFiles: 'MODIFIED FILES',
     diffView: 'Changes view · {lines} lines',
-    newProposal: '+ Proposal',
+    newProposal: ' + Proposal',
     commentsCount: '{count} comments',
     commentsPanelTitle: 'REVIEW COMMENTS',
     proposalsCount: '{count} proposals',

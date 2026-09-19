@@ -30,7 +30,8 @@ export const es: TranslationDictionary = {
     title: 'Revisiones',
     heroTitle: 'Revisa con criterio, decide con claridad.',
     heroSubtitle: 'Orquesta el análisis local y la revisión humana en un único espacio.',
-    newReview: '+ Nueva revisión',
+    newReview: 'Nueva revisión',
+    reviewInProgressTooltip: 'Hay una revisión en curso. Espera a que finalice antes de iniciar otra.',
     stats: {
       inProgress: 'En curso',
       activeReviews: 'Revisiones activas',
@@ -112,7 +113,7 @@ export const es: TranslationDictionary = {
     approveLocally: 'Aprobar localmente',
     modifiedFiles: 'FICHEROS MODIFICADOS',
     diffView: 'Vista de cambios · {lines} líneas',
-    newProposal: '+ Propuesta',
+    newProposal: ' + Propuesta',
     commentsCount: '{count} comentarios',
     commentsPanelTitle: 'COMENTARIOS DE REVISION',
     proposalsCount: '{count} propuestas',

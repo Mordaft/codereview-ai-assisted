@@ -82,6 +82,7 @@ async function acquireReviewData(state: typeof ReviewState.State) {
     }
   }
   const files = await listReviewFiles(state.reviewId)
+  emitReviewProgress(state.reviewId)
   return {
     reviewId: state.reviewId,
     status: ReviewStatus.IN_PREPARATION,

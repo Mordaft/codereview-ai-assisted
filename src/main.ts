@@ -15,6 +15,7 @@ let currentWorkspaceFileIndex = 0
 async function refreshReviews() {
   reviews = await listReviews()
   reviewKpis = await getReviewKpis()
+  return { reviews, reviewKpis }
 }
 
 function parseRoute() {
@@ -48,6 +49,7 @@ const savedTheme = localStorage.getItem('codereview-theme')
 if (savedTheme === 'dark') document.documentElement.classList.add('dark')
 
 async function applyRoute() {
+  await refreshReviews()
   const route = parseRoute()
   currentScreen = route.screen
   selectedReviewId = route.screen === AppScreen.REVIEWS ? route.reviewId : undefined

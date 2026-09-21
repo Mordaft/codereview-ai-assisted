@@ -3,7 +3,7 @@ import { trace } from '../diagnostics'
 import { getRemoteChange, listRemoteComments, listRemoteFiles } from '../platform-api'
 import { detectPlatform, parseReviewUrl } from '../platform-url'
 import { createReview, type Review } from '../review-db'
-import { getReviewThinking } from '../review-events'
+import { emitReviewProgress, emitReviewThinking, getReviewThinking } from '../review-events'
 import { formatRelativeTime, t, tStatus, toggleLanguage } from '../i18n'
 import { ReviewFilter } from '../enums'
 import {
@@ -25,7 +25,14 @@ export interface DashboardOptions {
   }
   filter: ReviewFilter
   navigate: (hash: string) => void
-  refreshReviews: () => Promise<void>
+  refreshReviews: () => Promise<{
+    reviews: Review[]
+    reviewKpis: {
+      activeReviews: number
+      pendingSlmComments: number
+      publishedComments: number
+    }
+  } | void>
 }
 
 export function reviewCard(review: Review): string {
@@ -57,7 +64,7 @@ export function reviewCard(review: Review): string {
   return `
     <button class="review-card bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark" data-review-id="${review.id}" type="button">
       <div class="review-card__topline"><span class="provider provider--${review.provider.toLowerCase()}">${review.provider}</span>${statusDisplay}</div>
-      <h3>${review.title}</h3><p class="repository">${review.repository}</p>
+      <h3 title="${review.title}">${review.title}</h3><p class="repository" title="${review.repository}">${review.repository}</p>
       ${thinkingBlock}
       <div class="progress" aria-label="${t('reviews.card.progressAria', { progress: review.progress })}"><span style="width: ${review.progress}%"></span></div>
       <div class="review-card__meta"><span>${t('reviews.card.commentsCount', { count: review.comments })}</span><span>${timeLabel}</span></div>
@@ -138,6 +145,16 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
   document.querySelector('#new-review')?.addEventListener('click', () => {
     if (reviews.some(isReviewProcessing)) return
     updateUrlPreview()
+    const connectButton = document.querySelector<HTMLButtonElement>('#connect-review')
+    if (connectButton) {
+      connectButton.disabled = false
+      connectButton.textContent = t('dialogs.connect.continueBtn')
+    }
+    const requestStatus = document.querySelector<HTMLElement>('#remote-request-status')
+    if (requestStatus) {
+      requestStatus.textContent = t('dialogs.connect.statusDefault')
+      requestStatus.className = 'token-hint text-brand-muted-light dark:!text-brand-muted-dark'
+    }
     document.querySelector<HTMLDialogElement>('#new-review-dialog')?.showModal()
   })
 
@@ -162,6 +179,7 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
     }
     const requestStatus = document.querySelector('#remote-request-status')!
     const connectButton = document.querySelector<HTMLButtonElement>('#connect-review')!
+    const originalButtonText = connectButton.innerHTML
     try {
       const location = parseReviewUrl(url)
       trace('review.create.platform-ready', {
@@ -173,12 +191,28 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
       if (!hasRepositoryAccessToken() && typeof accessToken === 'string') setRepositoryAccessToken(accessToken)
       requestStatus.textContent = t('dialogs.connect.statusConnecting', { provider: location.provider })
       connectButton.disabled = true
+      connectButton.innerHTML = `<span class="thinking-pulse"></span> ${t('common.loading')}`
       const [change, files, comments] = await Promise.all([
         getRemoteChange(location),
         listRemoteFiles(location),
         listRemoteComments(location),
       ])
       const reviewId = await createReview(url, { change, files, comments })
+      emitReviewProgress(reviewId)
+      emitReviewThinking({
+        reviewId,
+        phase: 'thinking',
+        thought: t('reviews.card.analyzingCode'),
+      })
+      const refreshed = await refreshReviews()
+      connectButton.disabled = false
+      connectButton.innerHTML = originalButtonText
+      document.querySelector<HTMLDialogElement>('#new-review-dialog')?.close()
+      renderDashboard(app, {
+        ...options,
+        reviews: refreshed?.reviews ?? options.reviews,
+        reviewKpis: refreshed?.reviewKpis ?? options.reviewKpis,
+      })
       void import('../review-runtime')
         .then(({ startReviewWorkflow }) => startReviewWorkflow(reviewId))
         .catch((error: unknown) => console.error('No se pudo iniciar el flujo LangGraph.', error))
@@ -188,12 +222,10 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
       requestStatus.textContent = message
       requestStatus.className = 'token-hint settings-status--error'
       connectButton.disabled = false
+      connectButton.innerHTML = originalButtonText
       window.alert(message)
       return
     }
-    await refreshReviews()
-    document.querySelector<HTMLDialogElement>('#new-review-dialog')?.close()
-    renderDashboard(app, options)
   })
 
   document.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) =>

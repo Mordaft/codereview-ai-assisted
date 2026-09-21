@@ -27,7 +27,7 @@ interface ChatCompletionChunk {
   }>
 }
 
-function parseSeverity(val: unknown): CommentSeverity | undefined {
+function parseSeverity(val: unknown): CommentSeverity {
   if (typeof val === 'number') {
     if (val === CommentSeverity.LOW || val === CommentSeverity.MEDIUM || val === CommentSeverity.HIGH) {
       return val
@@ -35,14 +35,14 @@ function parseSeverity(val: unknown): CommentSeverity | undefined {
   }
   if (typeof val === 'string') {
     const s = val.toLowerCase().trim()
-    if (s === 'baja' || s === 'low' || s === '1') return CommentSeverity.LOW
-    if (s === 'media' || s === 'medium' || s === '2') return CommentSeverity.MEDIUM
-    if (s === 'alta' || s === 'high' || s === '3') return CommentSeverity.HIGH
+    if (s === 'baja' || s === 'low' || s === '1' || s.includes('minor') || s.includes('info')) return CommentSeverity.LOW
+    if (s === 'media' || s === 'medium' || s === '2' || s.includes('warn')) return CommentSeverity.MEDIUM
+    if (s === 'alta' || s === 'high' || s === '3' || s.includes('crit') || s.includes('error')) return CommentSeverity.HIGH
   }
-  return undefined
+  return CommentSeverity.MEDIUM
 }
 
-function parseCategory(val: unknown): CommentCategory | undefined {
+function parseCategory(val: unknown): CommentCategory {
   if (typeof val === 'number') {
     if (val === CommentCategory.SOLID || val === CommentCategory.SECURITY || val === CommentCategory.QUALITY) {
       return val
@@ -50,40 +50,43 @@ function parseCategory(val: unknown): CommentCategory | undefined {
   }
   if (typeof val === 'string') {
     const c = val.toLowerCase().trim()
-    if (c === 'solid' || c === '1') return CommentCategory.SOLID
-    if (c === 'security' || c === 'seguridad' || c === '2') return CommentCategory.SECURITY
-    if (c === 'quality' || c === 'calidad' || c === '3') return CommentCategory.QUALITY
+    if (c === 'solid' || c === '1' || c.includes('solid') || c.includes('design') || c.includes('diseño')) return CommentCategory.SOLID
+    if (c === 'security' || c === 'seguridad' || c === '2' || c.includes('secur') || c.includes('segur') || c.includes('vulnerab')) return CommentCategory.SECURITY
+    if (c === 'quality' || c === 'calidad' || c === '3' || c.includes('qual') || c.includes('calid') || c.includes('style') || c.includes('mant')) return CommentCategory.QUALITY
   }
-  return undefined
+  return CommentCategory.SOLID
 }
 
-function normalizeSuggestions(items: unknown[]): SlmSuggestion[] {
-  return items.flatMap((item): SlmSuggestion[] => {
+function normalizeSuggestions(items: unknown[], fallbackFilePath?: string): SlmSuggestion[] {
+  return items.flatMap((item, index): SlmSuggestion[] => {
     if (!item || typeof item !== 'object') return []
     const raw = item as Record<string, unknown>
-    const line = typeof raw.line === 'string' ? Number(raw.line) : raw.line
+    const id = raw.id !== undefined && raw.id !== null ? String(raw.id) : `sug-${index + 1}-${Date.now()}`
+    const rawFilePath = typeof raw.filePath === 'string' ? raw.filePath.trim() : typeof raw.file === 'string' ? raw.file.trim() : typeof raw.path === 'string' ? raw.path.trim() : ''
+    const filePath = fallbackFilePath ?? (rawFilePath || 'unknown')
+
+    const lineRaw = raw.line ?? raw.lineNumber ?? raw.line_number
+    const lineNum = typeof lineRaw === 'string' ? Number.parseInt(lineRaw, 10) : typeof lineRaw === 'number' ? Math.round(lineRaw) : 1
+    const line = Number.isInteger(lineNum) && lineNum > 0 ? lineNum : 1
+
     const severity = parseSeverity(raw.severity)
     const category = parseCategory(raw.category)
 
-    if (
-      typeof raw.id !== 'string' ||
-      typeof raw.filePath !== 'string' ||
-      typeof line !== 'number' ||
-      !Number.isInteger(line) ||
-      line <= 0 ||
-      severity === undefined ||
-      category === undefined ||
-      typeof raw.message !== 'string' ||
-      typeof raw.recommendation !== 'string'
-    ) return []
+    const rawMessage = typeof raw.message === 'string' ? raw.message.trim() : typeof raw.description === 'string' ? raw.description.trim() : ''
+    const rawRec = typeof raw.recommendation === 'string' ? raw.recommendation.trim() : typeof raw.suggestion === 'string' ? raw.suggestion.trim() : ''
+    const message = rawMessage || rawRec
+    const recommendation = rawRec || rawMessage
+
+    if (!message) return []
+
     return [{
-      id: raw.id,
-      filePath: raw.filePath,
+      id,
+      filePath,
       line,
       severity,
       category,
-      message: raw.message,
-      recommendation: raw.recommendation,
+      message,
+      recommendation,
     }]
   })
 }
@@ -138,20 +141,31 @@ function completeJsonObjects(content: string) {
   return objects
 }
 
-function parseSuggestions(content: string, allowEmpty = false): SlmSuggestion[] {
+function parseSuggestions(content: string, allowEmpty = false, fallbackFilePath?: string): SlmSuggestion[] {
   const jsonContent = content.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? content
   try {
     const parsed = JSON.parse(jsonContent.trim()) as { suggestions?: unknown }
-    if (Array.isArray(parsed.suggestions)) return normalizeSuggestions(parsed.suggestions)
+    if (Array.isArray(parsed.suggestions)) return normalizeSuggestions(parsed.suggestions, fallbackFilePath)
   } catch {
     // A length-limited response can contain complete suggestion objects without closing the outer JSON.
   }
-  const recovered = completeJsonObjects(jsonContent)
-    .map((value) => {
-      try { return JSON.parse(value) as unknown } catch { return undefined }
-    })
-    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && 'filePath' in item && 'message' in item))
-  const suggestions = normalizeSuggestions(recovered)
+  const rawObjects = completeJsonObjects(jsonContent)
+  const candidateItems: unknown[] = []
+  for (const raw of rawObjects) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object') {
+        if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown }).suggestions)) {
+          candidateItems.push(...(parsed as { suggestions: unknown[] }).suggestions)
+        } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed) {
+          candidateItems.push(parsed)
+        }
+      }
+    } catch {
+      // Skip unparseable slice
+    }
+  }
+  const suggestions = normalizeSuggestions(candidateItems, fallbackFilePath)
   if (!suggestions.length && !allowEmpty) {
     throw new Error('El SLM devolvio un JSON incompleto o sin sugerencias validas.')
   }
@@ -159,12 +173,27 @@ function parseSuggestions(content: string, allowEmpty = false): SlmSuggestion[] 
 }
 
 function reviewInput(file: StoredReviewFile) {
-  const source = file.content ? `CONTENT:\n${file.content}` : `PATCH:\n${file.patch ?? ''}`
+  let source = ''
+  if (file.patch && file.patch.trim()) {
+    source += `CAMBIOS EN ESTA REVISIÓN (DIFF/PATCH):\n${file.patch}\n\n`
+    if (file.content) {
+      const maxContextChars = 20_000
+      const contentSnippet = file.content.length > maxContextChars
+        ? file.content.slice(0, maxContextChars) + '\n... [Contenido truncado para contexto]'
+        : file.content
+      source += `CONTENIDO COMPLETO DEL FICHERO (REFERENCIA):\n${contentSnippet}`
+    }
+  } else if (file.content) {
+    const maxChars = 30_000
+    source += `CONTENIDO DEL FICHERO:\n${file.content.length > maxChars ? file.content.slice(0, maxChars) + '\n... [Contenido truncado]' : file.content}`
+  } else {
+    source += 'SIN CONTENIDO DISPONIBLE'
+  }
   return `FILE: ${file.path}\nSTATUS: ${file.status}\n${source}`
 }
 
 function systemPrompt(instructions: string) {
-  return `${instructions}\n\n${reviewOutputContract}\n\nNo respondas con bloques markdown. No expliques el análisis fuera del JSON. Si no encuentras hallazgos, responde exactamente {"suggestions":[]}.`
+  return `${instructions}\n\n${reviewOutputContract}\n\nNo respondas con bloques markdown fuera del JSON. Mantén el razonamiento interno breve y enfocado directamente en los criterios de revisión para no agotar los tokens de respuesta. Si no encuentras hallazgos, responde exactamente {"suggestions":[]}.`
 }
 
 async function requestFileAnalysis(

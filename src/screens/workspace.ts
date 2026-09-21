@@ -40,7 +40,7 @@ export interface WorkspaceOptions {
   review: Review
   activeFileIndex?: number
   navigate: (hash: string) => void
-  refreshReviews: () => Promise<void>
+  refreshReviews: () => Promise<unknown>
   onFileSelect?: (index: number) => void
 }
 

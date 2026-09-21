@@ -131,17 +131,19 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
         file,
         async (streamedSuggestion) => {
           if (signal.aborted) return
-          if (streamedSuggestion.filePath === file.path) {
-            await saveSlmSuggestions(state.reviewId, [streamedSuggestion])
-            emitReviewThinking({
-              reviewId: state.reviewId,
-              filePath: file.path,
-              fileIndex: index + 1,
-              totalFiles: analyzableFiles.length,
-              phase: 'suggesting',
-            })
-            emitReviewProgress(state.reviewId)
+          const suggestionToSave = {
+            ...streamedSuggestion,
+            filePath: file.path,
           }
+          await saveSlmSuggestions(state.reviewId, [suggestionToSave])
+          emitReviewThinking({
+            reviewId: state.reviewId,
+            filePath: file.path,
+            fileIndex: index + 1,
+            totalFiles: analyzableFiles.length,
+            phase: 'suggesting',
+          })
+          emitReviewProgress(state.reviewId)
         },
         (thought) => {
           if (signal.aborted) return
@@ -169,7 +171,10 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
       break
     }
 
-    const validSuggestions = fileSuggestions.filter((suggestion) => suggestion.filePath === file.path)
+    const validSuggestions = fileSuggestions.map((suggestion) => ({
+      ...suggestion,
+      filePath: file.path,
+    }))
     suggestions.push(...validSuggestions)
     await saveSlmSuggestions(state.reviewId, validSuggestions)
     await updateReviewProgress(state.reviewId, Math.round(((index + 1) / analyzableFiles.length) * 100))

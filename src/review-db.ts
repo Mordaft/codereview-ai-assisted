@@ -160,20 +160,23 @@ export async function saveSlmSuggestions(reviewId: number, suggestions: Array<{ 
     const existingSlmComments = await database.reviewComments.where('reviewId').equals(reviewId).filter((comment) => comment.source === CommentSourceConst.SLM).toArray()
     const existingIds = new Set(existingSlmComments.map((comment) => comment.remoteId))
     const newSuggestions = suggestions.filter((suggestion) => !existingIds.has(`slm:${suggestion.id}`))
-    await database.reviewComments.bulkAdd(newSuggestions.map((suggestion) => ({
-      reviewId,
-      remoteId: `slm:${suggestion.id}`,
-      author: 'SLM local',
-      body: suggestion.message,
-      path: suggestion.filePath,
-      line: suggestion.line,
-      createdAt: new Date().toISOString(),
-      source: CommentSourceConst.SLM,
-      decision: ProposalDecision.PENDING,
-      category: suggestion.category,
-      recommendation: suggestion.recommendation,
-    })))
-    await database.reviews.update(reviewId, { comments: existingSlmComments.length + newSuggestions.length, updated: new Date().toISOString() })
+    if (newSuggestions.length > 0) {
+      await database.reviewComments.bulkAdd(newSuggestions.map((suggestion) => ({
+        reviewId,
+        remoteId: `slm:${suggestion.id}`,
+        author: 'SLM local',
+        body: suggestion.message,
+        path: suggestion.filePath,
+        line: suggestion.line,
+        createdAt: new Date().toISOString(),
+        source: CommentSourceConst.SLM,
+        decision: ProposalDecision.PENDING,
+        category: suggestion.category,
+        recommendation: suggestion.recommendation,
+      })))
+    }
+    const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()
+    await database.reviews.update(reviewId, { comments: totalComments, updated: new Date().toISOString() })
     suggestions = newSuggestions
   })
   trace('storage.slm-suggestions.complete', { reviewId, count: suggestions.length })

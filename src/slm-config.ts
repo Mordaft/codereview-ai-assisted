@@ -10,14 +10,18 @@ const defaultConfig: SlmConfig = {
   baseUrl: 'http://localhost:11434/v1',
   model: 'llama3.2',
   temperature: 0.2,
-  maxTokens: 4096,
+  maxTokens: 8192,
 }
 
 export function getSlmConfig(): SlmConfig {
   const savedConfig = localStorage.getItem(storageKey)
   if (!savedConfig) return defaultConfig
   try {
-    return { ...defaultConfig, ...JSON.parse(savedConfig) as Partial<SlmConfig> }
+    const parsed = { ...defaultConfig, ...(JSON.parse(savedConfig) as Partial<SlmConfig>) }
+    if (!parsed.maxTokens || parsed.maxTokens < 8192) {
+      parsed.maxTokens = 8192
+    }
+    return parsed
   } catch {
     return defaultConfig
   }

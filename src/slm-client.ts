@@ -61,7 +61,6 @@ function normalizeSuggestions(items: unknown[], fallbackFilePath?: string): SlmS
   return items.flatMap((item, index): SlmSuggestion[] => {
     if (!item || typeof item !== 'object') return []
     const raw = item as Record<string, unknown>
-    const id = raw.id !== undefined && raw.id !== null ? String(raw.id) : `sug-${index + 1}-${Date.now()}`
     const rawFilePath = typeof raw.filePath === 'string' ? raw.filePath.trim() : typeof raw.file === 'string' ? raw.file.trim() : typeof raw.path === 'string' ? raw.path.trim() : ''
     const filePath = fallbackFilePath ?? (rawFilePath || 'unknown')
 
@@ -78,6 +77,10 @@ function normalizeSuggestions(items: unknown[], fallbackFilePath?: string): SlmS
     const recommendation = rawRec || rawMessage
 
     if (!message) return []
+
+    const id = raw.id !== undefined && raw.id !== null && String(raw.id).trim().length > 0
+      ? String(raw.id).trim()
+      : `sug-${index + 1}-${line}-${Date.now()}`
 
     return [{
       id,
@@ -108,7 +111,7 @@ export function filterSuggestions(suggestions: SlmSuggestion[]) {
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  }).slice(0, 5)
+  })
 }
 
 function completeJsonObjects(content: string) {
@@ -141,7 +144,7 @@ function completeJsonObjects(content: string) {
   return objects
 }
 
-function parseSuggestions(content: string, allowEmpty = false, fallbackFilePath?: string): SlmSuggestion[] {
+export function parseSuggestions(content: string, allowEmpty = false, fallbackFilePath?: string): SlmSuggestion[] {
   const jsonContent = content.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? content
   try {
     const parsed = JSON.parse(jsonContent.trim()) as { suggestions?: unknown }
@@ -173,27 +176,12 @@ function parseSuggestions(content: string, allowEmpty = false, fallbackFilePath?
 }
 
 function reviewInput(file: StoredReviewFile) {
-  let source = ''
-  if (file.patch && file.patch.trim()) {
-    source += `CAMBIOS EN ESTA REVISIÓN (DIFF/PATCH):\n${file.patch}\n\n`
-    if (file.content) {
-      const maxContextChars = 20_000
-      const contentSnippet = file.content.length > maxContextChars
-        ? file.content.slice(0, maxContextChars) + '\n... [Contenido truncado para contexto]'
-        : file.content
-      source += `CONTENIDO COMPLETO DEL FICHERO (REFERENCIA):\n${contentSnippet}`
-    }
-  } else if (file.content) {
-    const maxChars = 30_000
-    source += `CONTENIDO DEL FICHERO:\n${file.content.length > maxChars ? file.content.slice(0, maxChars) + '\n... [Contenido truncado]' : file.content}`
-  } else {
-    source += 'SIN CONTENIDO DISPONIBLE'
-  }
-  return `FILE: ${file.path}\nSTATUS: ${file.status}\n${source}`
+  const source = file.content ? `CONTENT:\n${file.content}` : `PATCH:\n${file.patch ?? ''}`
+  return `FILE: ${file.path}\nSTATUS: ${file.status}\n\n${source}`
 }
 
 function systemPrompt(instructions: string) {
-  return `${instructions}\n\n${reviewOutputContract}\n\nNo respondas con bloques markdown fuera del JSON. Mantén el razonamiento interno breve y enfocado directamente en los criterios de revisión para no agotar los tokens de respuesta. Si no encuentras hallazgos, responde exactamente {"suggestions":[]}.`
+  return `${instructions}\n\n${reviewOutputContract}\n\nNo respondas con bloques markdown fuera del JSON. Si no encuentras hallazgos, responde exactamente {"suggestions":[]}.`
 }
 
 async function requestFileAnalysis(
@@ -233,7 +221,6 @@ async function requestFileAnalysis(
             properties: {
               suggestions: {
                 type: 'array',
-                maxItems: 5,
                 items: {
                   type: 'object',
                   properties: {
@@ -337,32 +324,41 @@ async function requestFileAnalysis(
     return clean
   }
 
-  const seenSuggestionIds = new Set<string>()
+  const seenSuggestionKeys = new Set<string>()
   const streamedSuggestions: SlmSuggestion[] = []
 
   function checkIncrementalSuggestions(currentContent: string) {
     const rawObjects = completeJsonObjects(currentContent)
+    const itemsToCheck: unknown[] = []
     for (const raw of rawObjects) {
       try {
         const parsed = JSON.parse(raw) as unknown
-        if (parsed && typeof parsed === 'object' && 'filePath' in parsed && 'message' in parsed) {
-          const normalized = normalizeSuggestions([parsed])
-          for (const suggestion of normalized) {
-            if (!seenSuggestionIds.has(suggestion.id) && !isGenericSuggestion(suggestion)) {
-              seenSuggestionIds.add(suggestion.id)
-              streamedSuggestions.push(suggestion)
-              if (onSuggestion) {
-                try {
-                  void onSuggestion(suggestion)
-                } catch {
-                  // Ignore callback errors during streaming
-                }
-              }
-            }
+        if (parsed && typeof parsed === 'object') {
+          if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown[] }).suggestions)) {
+            itemsToCheck.push(...(parsed as { suggestions: unknown[] }).suggestions)
+          } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed) {
+            itemsToCheck.push(parsed)
           }
         }
       } catch {
         // Skip incomplete or unparseable object slice
+      }
+    }
+    if (itemsToCheck.length > 0) {
+      const normalized = normalizeSuggestions(itemsToCheck, file.path)
+      for (const suggestion of normalized) {
+        const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
+        if (!seenSuggestionKeys.has(key) && !isGenericSuggestion(suggestion)) {
+          seenSuggestionKeys.add(key)
+          streamedSuggestions.push(suggestion)
+          if (onSuggestion) {
+            try {
+              void onSuggestion(suggestion)
+            } catch {
+              // Ignore callback errors during streaming
+            }
+          }
+        }
       }
     }
   }
@@ -473,7 +469,7 @@ async function requestFileAnalysis(
   // Attempt final parsing
   let finalSuggestions: SlmSuggestion[] = []
   try {
-    finalSuggestions = parseSuggestions(contentBuffer, finishReason !== 'length')
+    finalSuggestions = parseSuggestions(contentBuffer, finishReason !== 'length', file.path)
   } catch (parseError) {
     if (streamedSuggestions.length > 0) {
       finalSuggestions = streamedSuggestions
@@ -486,9 +482,14 @@ async function requestFileAnalysis(
     }
   }
 
+  if (finalSuggestions.length === 0 && streamedSuggestions.length > 0) {
+    finalSuggestions = streamedSuggestions
+  }
+
   // If truncated by length but we have suggestions recovered, accept and trace them
   if (finishReason === 'length') {
-    const recovered = filterSuggestions(finalSuggestions.length ? finalSuggestions : streamedSuggestions)
+    const candidateList = finalSuggestions.length ? finalSuggestions : streamedSuggestions
+    const recovered = filterSuggestions(candidateList)
     if (recovered.length > 0) {
       trace('slm.stream.truncated_recovered', {
         filePath: file.path,
@@ -503,7 +504,7 @@ async function requestFileAnalysis(
     )
   }
 
-  return filterSuggestions(finalSuggestions)
+  return filterSuggestions(finalSuggestions.length ? finalSuggestions : streamedSuggestions)
 }
 
 export async function analyzeFileWithSlm(

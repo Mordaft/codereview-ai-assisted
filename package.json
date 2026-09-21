@@ -7,7 +7,7 @@
     "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "jiti tests/adapters.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/history.test.ts",
+    "test": "jiti tests/adapters.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/history.test.ts && jiti tests/slm.test.ts",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-const SW_VERSION = '1789819871990'
+const SW_VERSION = '1790014546672'
 const CACHE_NAME = `codereview-shell-${SW_VERSION}`
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
 

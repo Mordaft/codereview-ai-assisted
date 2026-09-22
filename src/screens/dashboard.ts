@@ -96,7 +96,7 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
         <footer class="content-footer text-brand-muted-light dark:!text-brand-muted-dark"><span><span class="live-dot"></span> ${t('reviews.footer.slmReady')}</span><span>${t('reviews.footer.localDataNotice')}</span></footer>
       </main>
     </div>
-    <dialog id="new-review-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-review-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.connect.eyebrow')}</span><h2>${t('dialogs.connect.title')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.description')}</p><label for="review-url">${t('dialogs.connect.urlLabel')}</label><input id="review-url" name="review-url" type="url" placeholder="${t('dialogs.connect.urlPlaceholder')}" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><div id="url-adapter-preview" class="url-adapter-preview hidden text-xs mt-1.5 p-2 rounded border bg-[#f3f6f4] dark:!bg-[#182521] border-brand-line-light dark:!border-brand-line-dark"></div>${accessTokenField}<small id="remote-request-status" class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.statusDefault')}</small><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button><button class="primary-action" id="connect-review" value="default">${t('dialogs.connect.continueBtn')}</button></div></form></dialog>
+    <dialog id="new-review-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark"><form method="dialog" id="new-review-form"><button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel" aria-label="${t('common.close')}">×</button><span class="eyebrow">${t('dialogs.connect.eyebrow')}</span><h2>${t('dialogs.connect.title')}</h2><p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.description')}</p><label for="review-url">${t('dialogs.connect.urlLabel')}</label><input id="review-url" name="review-url" type="url" placeholder="${t('dialogs.connect.urlPlaceholder')}" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark"><div id="url-adapter-preview" class="url-adapter-preview hidden text-xs mt-1.5 p-2 rounded border bg-[#f3f6f4] dark:!bg-[#182521] border-brand-line-light dark:!border-brand-line-dark"></div>${accessTokenField}<small id="remote-request-status" class="token-hint text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.connect.statusDefault')}</small><div class="dialog-actions"><button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel">${t('common.cancel')}</button><button class="primary-action" id="connect-review" type="submit" value="default">${t('dialogs.connect.continueBtn')}</button></div></form></dialog>
   `
 
   const reviewUrlInput = document.querySelector<HTMLInputElement>('#review-url')
@@ -164,8 +164,20 @@ export function renderDashboard(app: HTMLElement, options: DashboardOptions) {
   document.querySelector('#theme-toggle')?.addEventListener('click', toggleTheme)
   document.querySelector('#lang-toggle')?.addEventListener('click', () => toggleLanguage())
 
+  const reviewDialog = document.querySelector<HTMLDialogElement>('#new-review-dialog')
+  reviewDialog?.querySelectorAll<HTMLButtonElement>('.dialog-close, .secondary-action').forEach((button) => {
+    button.addEventListener('click', () => {
+      reviewDialog.close()
+    })
+  })
+
   document.querySelector<HTMLFormElement>('#new-review-form')?.addEventListener('submit', async (event) => {
     event.preventDefault()
+    const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null
+    if (submitter?.value === 'cancel') {
+      reviewDialog?.close()
+      return
+    }
     if (reviews.some(isReviewProcessing)) {
       window.alert(t('reviews.reviewInProgressTooltip'))
       return

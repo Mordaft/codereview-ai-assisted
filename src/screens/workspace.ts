@@ -228,7 +228,7 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
     </div>
     <dialog id="new-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark">
       <form method="dialog" id="new-proposal-form">
-        <button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button>
+        <button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel" aria-label="${t('common.close')}">×</button>
         <span class="eyebrow">${t('dialogs.proposal.eyebrow')}</span>
         <h2 id="new-proposal-title">${t('dialogs.proposal.addTitle')}</h2>
         <p id="new-proposal-hint" class="text-brand-muted-light dark:!text-brand-muted-dark"></p>
@@ -269,20 +269,20 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
         </div>
         <label class="proposal-global-toggle" id="proposal-global-toggle"><input type="checkbox" id="proposal-global" name="proposal-global"> ${t('dialogs.proposal.globalCheckbox')}</label>
         <div class="dialog-actions">
-          <button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button>
-          <button class="primary-action" id="save-proposal" value="default">${t('dialogs.proposal.saveProposal')}</button>
+          <button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel">${t('common.cancel')}</button>
+          <button class="primary-action" id="save-proposal" type="submit" value="default">${t('dialogs.proposal.saveProposal')}</button>
         </div>
       </form>
     </dialog>
     <dialog id="delete-proposal-dialog" class="review-dialog bg-brand-surface-light text-brand-primary-light dark:!bg-brand-surface-dark dark:!text-brand-primary-dark">
       <form method="dialog" id="delete-proposal-form">
-        <button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" value="cancel" aria-label="${t('common.close')}">×</button>
+        <button class="dialog-close text-brand-muted-light dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel" aria-label="${t('common.close')}">×</button>
         <span class="eyebrow">${t('dialogs.delete.eyebrow')}</span>
         <h2>${t('dialogs.delete.title')}</h2>
         <p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('dialogs.delete.warning')}</p>
         <div class="dialog-actions">
-          <button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" value="cancel">${t('common.cancel')}</button>
-          <button class="primary-action primary-action--danger" value="default">${t('dialogs.delete.confirmBtn')}</button>
+          <button class="secondary-action bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button" formnovalidate value="cancel">${t('common.cancel')}</button>
+          <button class="primary-action primary-action--danger" type="submit" value="default">${t('dialogs.delete.confirmBtn')}</button>
         </div>
       </form>
     </dialog>
@@ -349,6 +349,19 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
   const saveProposalButton = document.querySelector<HTMLButtonElement>('#save-proposal')!
   const deleteDialog = document.querySelector<HTMLDialogElement>('#delete-proposal-dialog')!
   const deleteForm = document.querySelector<HTMLFormElement>('#delete-proposal-form')!
+
+  proposalDialog.querySelectorAll<HTMLButtonElement>('.dialog-close, .secondary-action').forEach((button) => {
+    button.addEventListener('click', () => {
+      proposalDialog.close()
+    })
+  })
+
+  deleteDialog.querySelectorAll<HTMLButtonElement>('.dialog-close, .secondary-action').forEach((button) => {
+    button.addEventListener('click', () => {
+      pendingDeleteId = undefined
+      deleteDialog.close()
+    })
+  })
 
   let proposalContext: { path?: string; line?: number } = {}
   let proposalEditId: number | undefined

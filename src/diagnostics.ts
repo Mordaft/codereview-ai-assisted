@@ -7,9 +7,24 @@ export interface DiagnosticEvent {
 const storageKey = 'codereview-diagnostics'
 const maxEvents = 100
 
+function serializeValue(val: unknown): unknown {
+  if (val instanceof Error) {
+    return {
+      name: val.name,
+      message: val.message,
+      stack: val.stack,
+    }
+  }
+  return val
+}
+
 function safeDetails(details?: Record<string, unknown>) {
   if (!details) return undefined
-  return Object.fromEntries(Object.entries(details).filter(([key]) => !/token|authorization|^content$|^patch$|body/i.test(key)))
+  return Object.fromEntries(
+    Object.entries(details)
+      .filter(([key]) => !/token|authorization|^content$|^patch$|body/i.test(key))
+      .map(([key, val]) => [key, serializeValue(val)])
+  )
 }
 
 export function trace(event: string, details?: Record<string, unknown>) {

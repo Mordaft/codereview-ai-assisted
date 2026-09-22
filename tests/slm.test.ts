@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { parseSuggestions, filterSuggestions } from '../src/slm-client'
+import { parseSuggestions, filterSuggestions, getGenericFilterReason } from '../src/slm-client'
+import { computeSlmRemoteId } from '../src/review-db'
 import { CommentCategory, CommentSeverity } from '../src/enums'
 
 console.log('--- Iniciando pruebas de Parsing y Resiliencia de Sugerencias SLM ---')
@@ -147,6 +148,74 @@ console.log('--- Iniciando pruebas de Parsing y Resiliencia de Sugerencias SLM -
   const filtered = filterSuggestions(suggestions)
   assert.equal(filtered.length, 1, 'Solo debe quedar la sugerencia válida y deduplicada')
   assert.equal(filtered[0].id, 'v1')
+}
+
+// Test 6: Soporte para sinónimos devueltos por diversos modelos SLM
+{
+  console.log('Test 6: Soporte para sinónimos de mensaje y recomendación')
+  const jsonWithSynonyms = JSON.stringify({
+    suggestions: [
+      {
+        id: 'syn-1',
+        details: 'Fuga de memoria potencial al no cerrar InputStream',
+        remediation: 'Utilizar bloque try-with-resources para garantizar el cierre',
+        severity: 'alta',
+        category: 'calidad',
+      },
+      {
+        id: 'syn-2',
+        comment: 'Falta validación de parámetros de entrada',
+        proposal: 'Comprobar nulos antes de acceder a las propiedades',
+        severity: 'media',
+        category: 'solid',
+      },
+    ],
+  })
+  const parsed = parseSuggestions(jsonWithSynonyms, false, 'src/FileStream.java')
+  assert.equal(parsed.length, 2)
+  assert.equal(parsed[0].message, 'Fuga de memoria potencial al no cerrar InputStream')
+  assert.equal(parsed[0].recommendation, 'Utilizar bloque try-with-resources para garantizar el cierre')
+  assert.equal(parsed[1].message, 'Falta validación de parámetros de entrada')
+  assert.equal(parsed[1].recommendation, 'Comprobar nulos antes de acceder a las propiedades')
+}
+
+// Test 7: Prevención de colisiones de IDs locales id: "1" entre diferentes ficheros
+{
+  console.log('Test 7: Desambiguación de IDs locales con computeSlmRemoteId')
+  const suggestionFileA = { id: '1', filePath: 'src/services/AuthService.java' }
+  const suggestionFileB = { id: '1', filePath: 'src/controllers/AuthController.java' }
+  const remoteIdA = computeSlmRemoteId(suggestionFileA)
+  const remoteIdB = computeSlmRemoteId(suggestionFileB)
+
+  assert.equal(remoteIdA, 'slm:src/services/AuthService.java:1')
+  assert.equal(remoteIdB, 'slm:src/controllers/AuthController.java:1')
+  assert.notEqual(remoteIdA, remoteIdB, 'Sugerencias con mismo id local en distintos ficheros deben tener remoteId diferente')
+}
+
+// Test 8: Diagnóstico de motivo de descarte con getGenericFilterReason
+{
+  console.log('Test 8: Detección precisa de motivos de descarte')
+  const tooShort = {
+    id: 's1',
+    filePath: 'Test.java',
+    line: 1,
+    severity: CommentSeverity.LOW,
+    category: CommentCategory.QUALITY,
+    message: 'Corto',
+    recommendation: 'Fix',
+  }
+  assert.equal(getGenericFilterReason(tooShort), 'length_below_minimum')
+
+  const genericPattern = {
+    id: 's2',
+    filePath: 'Test.java',
+    line: 1,
+    severity: CommentSeverity.LOW,
+    category: CommentCategory.QUALITY,
+    message: 'Revisa este codigo detenidamente',
+    recommendation: 'Mejora la calidad del codigo segun las guias',
+  }
+  assert.equal(getGenericFilterReason(genericPattern), 'matched_generic_pattern')
 }
 
 console.log('✓ Todas las pruebas de Sugerencias SLM pasaron exitosamente.')

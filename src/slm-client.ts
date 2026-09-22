@@ -59,7 +59,10 @@ function parseCategory(val: unknown): CommentCategory {
 
 function normalizeSuggestions(items: unknown[], fallbackFilePath?: string): SlmSuggestion[] {
   return items.flatMap((item, index): SlmSuggestion[] => {
-    if (!item || typeof item !== 'object') return []
+    if (!item || typeof item !== 'object') {
+      trace('slm.suggestion.normalize_discarded', { reason: 'not_an_object', rawItemType: typeof item })
+      return []
+    }
     const raw = item as Record<string, unknown>
     const rawFilePath = typeof raw.filePath === 'string' ? raw.filePath.trim() : typeof raw.file === 'string' ? raw.file.trim() : typeof raw.path === 'string' ? raw.path.trim() : ''
     const filePath = fallbackFilePath ?? (rawFilePath || 'unknown')
@@ -71,12 +74,34 @@ function normalizeSuggestions(items: unknown[], fallbackFilePath?: string): SlmS
     const severity = parseSeverity(raw.severity)
     const category = parseCategory(raw.category)
 
-    const rawMessage = typeof raw.message === 'string' ? raw.message.trim() : typeof raw.description === 'string' ? raw.description.trim() : ''
-    const rawRec = typeof raw.recommendation === 'string' ? raw.recommendation.trim() : typeof raw.suggestion === 'string' ? raw.suggestion.trim() : ''
+    const rawMessage = typeof raw.message === 'string' ? raw.message.trim()
+      : typeof raw.description === 'string' ? raw.description.trim()
+      : typeof raw.comment === 'string' ? raw.comment.trim()
+      : typeof raw.details === 'string' ? raw.details.trim()
+      : typeof raw.text === 'string' ? raw.text.trim()
+      : typeof raw.observation === 'string' ? raw.observation.trim()
+      : ''
+
+    const rawRec = typeof raw.recommendation === 'string' ? raw.recommendation.trim()
+      : typeof raw.suggestion === 'string' ? raw.suggestion.trim()
+      : typeof raw.remediation === 'string' ? raw.remediation.trim()
+      : typeof raw.solution === 'string' ? raw.solution.trim()
+      : typeof raw.proposal === 'string' ? raw.proposal.trim()
+      : typeof raw.propuesta === 'string' ? raw.propuesta.trim()
+      : ''
+
     const message = rawMessage || rawRec
     const recommendation = rawRec || rawMessage
 
-    if (!message) return []
+    if (!message) {
+      trace('slm.suggestion.normalize_discarded', {
+        reason: 'missing_message_and_recommendation',
+        filePath,
+        line,
+        rawKeys: Object.keys(raw),
+      })
+      return []
+    }
 
     const id = raw.id !== undefined && raw.id !== null && String(raw.id).trim().length > 0
       ? String(raw.id).trim()
@@ -98,20 +123,52 @@ function normalizeText(value: string) {
   return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim()
 }
 
-function isGenericSuggestion(suggestion: SlmSuggestion) {
+export function getGenericFilterReason(suggestion: SlmSuggestion): string | null {
   const text = normalizeText(`${suggestion.message} ${suggestion.recommendation}`)
-  return text.length < 24 || /(?:todas las lineas|cada linea|nombre .* no cumple|cumple con el estandar|asegurate de que .* sea unico|mejora la calidad del codigo|sigue las buenas practicas|revisa este codigo)/i.test(text)
+  if (text.length < 24) {
+    return 'length_below_minimum'
+  }
+  if (/(?:todas las lineas|cada linea|nombre .* no cumple|cumple con el estandar|asegurate de que .* sea unico|mejora la calidad del codigo|sigue las buenas practicas|revisa este codigo)/i.test(text)) {
+    return 'matched_generic_pattern'
+  }
+  return null
+}
+
+export function isGenericSuggestion(suggestion: SlmSuggestion) {
+  return getGenericFilterReason(suggestion) !== null
 }
 
 export function filterSuggestions(suggestions: SlmSuggestion[]) {
   const seen = new Set<string>()
-  return suggestions.filter((suggestion) => {
-    if (isGenericSuggestion(suggestion)) return false
+  const result: SlmSuggestion[] = []
+  for (const suggestion of suggestions) {
+    const genericReason = getGenericFilterReason(suggestion)
+    if (genericReason !== null) {
+      trace('slm.suggestion.discarded', {
+        filePath: suggestion.filePath,
+        line: suggestion.line,
+        reason: 'generic_filter',
+        detail: genericReason,
+        message: suggestion.message,
+        recommendation: suggestion.recommendation,
+      })
+      continue
+    }
     const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
-    if (seen.has(key)) return false
+    if (seen.has(key)) {
+      trace('slm.suggestion.discarded', {
+        filePath: suggestion.filePath,
+        line: suggestion.line,
+        reason: 'duplicate_in_file',
+        key,
+        message: suggestion.message,
+      })
+      continue
+    }
     seen.add(key)
-    return true
-  })
+    result.push(suggestion)
+  }
+  return result
 }
 
 function completeJsonObjects(content: string) {
@@ -148,19 +205,29 @@ export function parseSuggestions(content: string, allowEmpty = false, fallbackFi
   const jsonContent = content.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ?? content
   try {
     const parsed = JSON.parse(jsonContent.trim()) as { suggestions?: unknown }
-    if (Array.isArray(parsed.suggestions)) return normalizeSuggestions(parsed.suggestions, fallbackFilePath)
+    if (Array.isArray(parsed.suggestions)) {
+      trace('slm.parse.json_array_success', {
+        filePath: fallbackFilePath,
+        rawCount: parsed.suggestions.length,
+      })
+      return normalizeSuggestions(parsed.suggestions, fallbackFilePath)
+    }
   } catch {
     // A length-limited response can contain complete suggestion objects without closing the outer JSON.
   }
   const rawObjects = completeJsonObjects(jsonContent)
+  trace('slm.parse.fallback_objects', {
+    filePath: fallbackFilePath,
+    objectCount: rawObjects.length,
+  })
   const candidateItems: unknown[] = []
   for (const raw of rawObjects) {
     try {
       const parsed = JSON.parse(raw) as unknown
       if (parsed && typeof parsed === 'object') {
-        if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown }).suggestions)) {
+        if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown[] }).suggestions)) {
           candidateItems.push(...(parsed as { suggestions: unknown[] }).suggestions)
-        } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed) {
+        } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed || 'suggestion' in parsed) {
           candidateItems.push(parsed)
         }
       }
@@ -170,6 +237,10 @@ export function parseSuggestions(content: string, allowEmpty = false, fallbackFi
   }
   const suggestions = normalizeSuggestions(candidateItems, fallbackFilePath)
   if (!suggestions.length && !allowEmpty) {
+    trace('slm.parse.empty_or_invalid', {
+      filePath: fallbackFilePath,
+      contentLength: content.length,
+    })
     throw new Error('El SLM devolvio un JSON incompleto o sin sugerencias validas.')
   }
   return suggestions
@@ -247,6 +318,13 @@ async function requestFileAnalysis(
         { role: 'user', content: userContent },
       ],
     }),
+  })
+
+  trace('slm.stream.response_status', {
+    filePath: file.path,
+    status: response.status,
+    statusText: response.statusText,
+    ok: response.ok,
   })
 
   if (!response.ok) {
@@ -329,6 +407,7 @@ async function requestFileAnalysis(
 
   function checkIncrementalSuggestions(currentContent: string) {
     const rawObjects = completeJsonObjects(currentContent)
+    if (rawObjects.length === 0) return
     const itemsToCheck: unknown[] = []
     for (const raw of rawObjects) {
       try {
@@ -336,7 +415,7 @@ async function requestFileAnalysis(
         if (parsed && typeof parsed === 'object') {
           if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown[] }).suggestions)) {
             itemsToCheck.push(...(parsed as { suggestions: unknown[] }).suggestions)
-          } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed) {
+          } else if ('message' in parsed || 'description' in parsed || 'recommendation' in parsed || 'suggestion' in parsed) {
             itemsToCheck.push(parsed)
           }
         }
@@ -347,16 +426,50 @@ async function requestFileAnalysis(
     if (itemsToCheck.length > 0) {
       const normalized = normalizeSuggestions(itemsToCheck, file.path)
       for (const suggestion of normalized) {
+        const genericReason = getGenericFilterReason(suggestion)
+        if (genericReason !== null) {
+          const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
+          if (!seenSuggestionKeys.has(key)) {
+            seenSuggestionKeys.add(key)
+            trace('slm.suggestion.discarded', {
+              filePath: suggestion.filePath,
+              line: suggestion.line,
+              reason: 'generic_filter_stream',
+              detail: genericReason,
+              message: suggestion.message,
+            })
+          }
+          continue
+        }
         const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
-        if (!seenSuggestionKeys.has(key) && !isGenericSuggestion(suggestion)) {
-          seenSuggestionKeys.add(key)
-          streamedSuggestions.push(suggestion)
-          if (onSuggestion) {
-            try {
-              void onSuggestion(suggestion)
-            } catch {
-              // Ignore callback errors during streaming
+        if (seenSuggestionKeys.has(key)) {
+          continue
+        }
+        seenSuggestionKeys.add(key)
+        streamedSuggestions.push(suggestion)
+        trace('slm.stream.suggestion_detected', {
+          filePath: suggestion.filePath,
+          line: suggestion.line,
+          id: suggestion.id,
+          severity: suggestion.severity,
+          category: suggestion.category,
+        })
+        if (onSuggestion) {
+          try {
+            const maybePromise = onSuggestion(suggestion)
+            if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+              (maybePromise as Promise<void>).catch((err: unknown) => {
+                trace('slm.stream.callback_error', {
+                  filePath: file.path,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              })
             }
+          } catch (err) {
+            trace('slm.stream.callback_error', {
+              filePath: file.path,
+              error: err instanceof Error ? err.message : String(err),
+            })
           }
         }
       }
@@ -504,7 +617,15 @@ async function requestFileAnalysis(
     )
   }
 
-  return filterSuggestions(finalSuggestions.length ? finalSuggestions : streamedSuggestions)
+  const candidateList = finalSuggestions.length ? finalSuggestions : streamedSuggestions
+  const filtered = filterSuggestions(candidateList)
+  trace('slm.analysis.file_result', {
+    filePath: file.path,
+    candidatesCount: candidateList.length,
+    keptCount: filtered.length,
+    suggestions: filtered.map((s) => ({ id: s.id, line: s.line, severity: s.severity })),
+  })
+  return filtered
 }
 
 export async function analyzeFileWithSlm(

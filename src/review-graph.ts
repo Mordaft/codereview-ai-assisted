@@ -131,19 +131,34 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
         file,
         async (streamedSuggestion) => {
           if (signal.aborted) return
+          trace('slm.graph.streamed_suggestion_received', {
+            reviewId: state.reviewId,
+            filePath: file.path,
+            suggestionId: streamedSuggestion.id,
+            line: streamedSuggestion.line,
+          })
           const suggestionToSave = {
             ...streamedSuggestion,
             filePath: file.path,
           }
-          await saveSlmSuggestions(state.reviewId, [suggestionToSave])
-          emitReviewThinking({
-            reviewId: state.reviewId,
-            filePath: file.path,
-            fileIndex: index + 1,
-            totalFiles: analyzableFiles.length,
-            phase: 'suggesting',
-          })
-          emitReviewProgress(state.reviewId)
+          try {
+            await saveSlmSuggestions(state.reviewId, [suggestionToSave])
+            emitReviewThinking({
+              reviewId: state.reviewId,
+              filePath: file.path,
+              fileIndex: index + 1,
+              totalFiles: analyzableFiles.length,
+              phase: 'suggesting',
+            })
+            emitReviewProgress(state.reviewId)
+          } catch (saveErr) {
+            trace('slm.graph.streamed_save_error', {
+              reviewId: state.reviewId,
+              filePath: file.path,
+              suggestionId: streamedSuggestion.id,
+              error: saveErr,
+            })
+          }
         },
         (thought) => {
           if (signal.aborted) return
@@ -175,8 +190,21 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
       ...suggestion,
       filePath: file.path,
     }))
+    trace('slm.graph.file_saving_batch', {
+      reviewId: state.reviewId,
+      filePath: file.path,
+      batchCount: validSuggestions.length,
+    })
     suggestions.push(...validSuggestions)
-    await saveSlmSuggestions(state.reviewId, validSuggestions)
+    try {
+      await saveSlmSuggestions(state.reviewId, validSuggestions)
+    } catch (batchSaveErr) {
+      trace('slm.graph.batch_save_error', {
+        reviewId: state.reviewId,
+        filePath: file.path,
+        error: batchSaveErr,
+      })
+    }
     await updateReviewProgress(state.reviewId, Math.round(((index + 1) / analyzableFiles.length) * 100))
     emitReviewProgress(state.reviewId)
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })

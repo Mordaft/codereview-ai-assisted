@@ -85,15 +85,15 @@ export async function listReviews() {
       if (!review.id) continue
       if (review.remoteFiles?.length) {
         const storedFileCount = await database.reviewFiles.where('reviewId').equals(review.id).count()
-        if (storedFileCount !== review.remoteFiles.length) {
-          await database.reviewFiles.where('reviewId').equals(review.id).delete()
+        if (storedFileCount === 0) {
+          trace('storage.reviews.rehydrate_remote_files', { reviewId: review.id, count: review.remoteFiles.length })
           await database.reviewFiles.bulkAdd(review.remoteFiles.map((file) => ({ ...file, reviewId: review.id! })))
         }
       }
       if (review.remoteComments?.length) {
         const storedCommentCount = await database.reviewComments.where('reviewId').equals(review.id).count()
-        if (storedCommentCount !== review.remoteComments.length) {
-          await database.reviewComments.where('reviewId').equals(review.id).delete()
+        if (storedCommentCount === 0) {
+          trace('storage.reviews.rehydrate_remote_comments', { reviewId: review.id, count: review.remoteComments.length })
           await database.reviewComments.bulkAdd(review.remoteComments.map(({ id: remoteId, ...comment }) => ({ ...comment, reviewId: review.id!, remoteId })))
         }
       }
@@ -155,31 +155,78 @@ export async function listReviewComments(reviewId: number) {
   return database.reviewComments.where('reviewId').equals(reviewId).toArray()
 }
 
+export function computeSlmRemoteId(suggestion: { id: string; filePath: string }): string {
+  if (suggestion.id.startsWith('slm:')) {
+    return suggestion.id
+  }
+  return `slm:${suggestion.filePath}:${suggestion.id}`
+}
+
 export async function saveSlmSuggestions(reviewId: number, suggestions: Array<{ id: string; filePath: string; line: number; severity: CommentSeverity; category: CommentCategory; message: string; recommendation: string }>) {
-  await database.transaction('rw', database.reviews, database.reviewComments, async () => {
-    const existingSlmComments = await database.reviewComments.where('reviewId').equals(reviewId).filter((comment) => comment.source === CommentSourceConst.SLM).toArray()
-    const existingIds = new Set(existingSlmComments.map((comment) => comment.remoteId))
-    const newSuggestions = suggestions.filter((suggestion) => !existingIds.has(`slm:${suggestion.id}`))
-    if (newSuggestions.length > 0) {
-      await database.reviewComments.bulkAdd(newSuggestions.map((suggestion) => ({
-        reviewId,
-        remoteId: `slm:${suggestion.id}`,
-        author: 'SLM local',
-        body: suggestion.message,
-        path: suggestion.filePath,
-        line: suggestion.line,
-        createdAt: new Date().toISOString(),
-        source: CommentSourceConst.SLM,
-        decision: ProposalDecision.PENDING,
-        category: suggestion.category,
-        recommendation: suggestion.recommendation,
-      })))
-    }
-    const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()
-    await database.reviews.update(reviewId, { comments: totalComments, updated: new Date().toISOString() })
-    suggestions = newSuggestions
+  trace('storage.slm_suggestions.start', {
+    reviewId,
+    incomingCount: suggestions.length,
+    suggestions: suggestions.map((s) => ({
+      id: s.id,
+      filePath: s.filePath,
+      line: s.line,
+      severity: s.severity,
+    })),
   })
-  trace('storage.slm-suggestions.complete', { reviewId, count: suggestions.length })
+
+  let newlySavedCount = 0
+  try {
+    await database.transaction('rw', database.reviews, database.reviewComments, async () => {
+      const existingSlmComments = await database.reviewComments.where('reviewId').equals(reviewId).filter((comment) => comment.source === CommentSourceConst.SLM).toArray()
+      const existingIds = new Set(existingSlmComments.map((comment) => comment.remoteId))
+      const newSuggestions = suggestions.filter((suggestion) => {
+        const remoteId = computeSlmRemoteId(suggestion)
+        const alreadyExists = existingIds.has(remoteId)
+        if (alreadyExists) {
+          trace('storage.slm_suggestions.duplicate_skipped', {
+            reviewId,
+            suggestionId: suggestion.id,
+            remoteId,
+            filePath: suggestion.filePath,
+            line: suggestion.line,
+          })
+          return false
+        }
+        return true
+      })
+
+      if (newSuggestions.length > 0) {
+        await database.reviewComments.bulkAdd(newSuggestions.map((suggestion) => ({
+          reviewId,
+          remoteId: computeSlmRemoteId(suggestion),
+          author: 'SLM local',
+          body: suggestion.message,
+          path: suggestion.filePath,
+          line: suggestion.line,
+          createdAt: new Date().toISOString(),
+          source: CommentSourceConst.SLM,
+          decision: ProposalDecision.PENDING,
+          category: suggestion.category,
+          recommendation: suggestion.recommendation,
+          severity: suggestion.severity,
+        })))
+      }
+      const totalComments = await database.reviewComments.where('reviewId').equals(reviewId).count()
+      await database.reviews.update(reviewId, { comments: totalComments, updated: new Date().toISOString() })
+      newlySavedCount = newSuggestions.length
+    })
+    trace('storage.slm_suggestions.complete', {
+      reviewId,
+      incomingCount: suggestions.length,
+      savedCount: newlySavedCount,
+    })
+  } catch (err) {
+    trace('storage.slm_suggestions.error', {
+      reviewId,
+      error: err,
+    })
+    throw err
+  }
 }
 
 export async function updateReviewProgress(id: number, progress: number) {

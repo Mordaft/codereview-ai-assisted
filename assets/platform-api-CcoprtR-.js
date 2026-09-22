@@ -1,1 +1,0 @@
-import{V as e}from"./index-BwnfBAas.js";async function t(t){return e(t.provider).getRemoteChange(t)}async function n(t){return e(t.provider).listRemoteFiles(t)}async function r(t){return e(t.provider).listRemoteComments(t)}async function i(t,n){return e(t.provider).publishRemoteComment(t,n)}export{i,r as n,n as r,t};

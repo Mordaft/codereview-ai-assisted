@@ -1,4 +1,4 @@
-import{m as e}from"./index-BwnfBAas.js";var t,n=!1;function r(t){let n=document.querySelector(`#pwa-update-toast`);n||(n=document.createElement(`div`),n.id=`pwa-update-toast`,n.className=`pwa-update-toast`,n.setAttribute(`role`,`alert`),document.body.appendChild(n)),n.innerHTML=`
+import{m as e}from"./index-CLSXhyul.js";var t,n=!1;function r(t){let n=document.querySelector(`#pwa-update-toast`);n||(n=document.createElement(`div`),n.id=`pwa-update-toast`,n.className=`pwa-update-toast`,n.setAttribute(`role`,`alert`),document.body.appendChild(n)),n.innerHTML=`
     <div class="pwa-update-toast__content">
       <span class="pwa-update-toast__icon" aria-hidden="true">✦</span>
       <span class="pwa-update-toast__text font-medium text-sm">${e(`pwa.updateAvailable`)}</span>

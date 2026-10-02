@@ -107,26 +107,26 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
   const storedComments = review.id ? await listReviewComments(review.id) : []
   const workspaceFiles = review.remoteFiles?.length
     ? review.remoteFiles.map((file) => ({
-        path: file.path,
-        type: file.path.split('.').at(-1)?.toUpperCase() ?? 'TXT',
-        lines: (file.content ?? file.patch ?? t('workspace.noFilesDownloadedText')).split('\n'),
-      }))
+      path: file.path,
+      type: file.path.split('.').at(-1)?.toUpperCase() ?? 'TXT',
+      lines: (file.content ?? file.patch ?? t('workspace.noFilesDownloadedText')).split('\n'),
+    }))
     : [{ path: t('workspace.noFilesDownloaded'), type: 'TXT', lines: [t('workspace.noFilesDownloadedText')] }]
 
   const workspaceComments = storedComments.length
     ? storedComments.map((comment) => ({
-        id: comment.id,
-        file: comment.path,
-        line: comment.line,
-        severity: comment.severity ?? CommentSeverity.MEDIUM,
-        message: comment.body,
-        author: tAuthor(comment.author, comment.source),
-        category: comment.category ?? CommentCategory.SOLID,
-        decision: normalizeDecision(comment.decision),
-        source: comment.source,
-      }))
+      id: comment.id,
+      file: comment.path,
+      line: comment.line,
+      severity: comment.severity ?? CommentSeverity.MEDIUM,
+      message: comment.body,
+      author: tAuthor(comment.author, comment.source),
+      category: comment.category ?? CommentCategory.SOLID,
+      decision: normalizeDecision(comment.decision),
+      source: comment.source,
+    }))
     : review.remoteComments?.length
-    ? review.remoteComments.map((comment) => ({
+      ? review.remoteComments.map((comment) => ({
         id: undefined as number | undefined,
         file: comment.path,
         line: comment.line,
@@ -137,7 +137,7 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
         decision: ProposalDecision.PENDING,
         source: CommentSource.REMOTE,
       }))
-    : []
+      : []
 
   const activeFile = workspaceFiles[activeFileIndex] ?? workspaceFiles[0]
   const activeFileComments = workspaceComments.filter((comment) => !comment.file || comment.file === activeFile.path)
@@ -167,11 +167,11 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
         <div class="workspace-actions">
           ${statusDisplay}
           ${isReviewLocked
-            ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>`
-            : isProcessing
-            ? `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button>`
-            : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`
-          }
+      ? `<button class="primary-action" data-decision="${ReviewAction.REOPEN}" type="button">${t('common.reopen')}</button>`
+      : isProcessing
+        ? `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button>`
+        : `<button class="outline-action bg-brand-surface-light text-brand-muted-light border-brand-line-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark dark:!border-brand-line-dark" data-decision="${ReviewAction.CLOSE}" type="button">${t('common.close')}</button><button class="primary-action" data-decision="${ReviewAction.APPROVE}" type="button">${t('workspace.approveLocally')}</button>`
+    }
           ${renderLangToggle('workspace-lang-toggle')}
           <button class="icon-button bg-brand-surface-light text-brand-muted-light dark:!bg-brand-surface-dark dark:!text-brand-muted-dark" id="workspace-theme-toggle" type="button" aria-label="${t('common.toggleTheme')}" title="${t('common.toggleTheme')}">◐</button>
         </div>
@@ -181,16 +181,16 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
           <div class="panel-label text-brand-muted-light dark:!text-brand-muted-dark">${t('workspace.modifiedFiles')} <span class="panel-counter">${workspaceFiles.length}</span></div>
           <div class="tree-root text-brand-muted-light dark:!text-brand-muted-dark">⌄ ${review.repository}</div>
           ${workspaceFiles.map((file, index) => {
-            const fileComments = fileCommentsMap.get(file.path) ?? []
-            const commentCount = fileComments.length
-            const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH || (comment.severity as unknown) === 'alta')
-            const badgeClass = hasHighSeverity ? 'comment-badge comment-badge--alta' : 'comment-badge'
-            const badgeLabel = t('workspace.reviewProposalBadge', {
-              count: commentCount,
-              label: commentCount === 1 ? t('workspace.proposalWordSingular') : t('workspace.proposalWordPlural'),
-            })
-            return `<button class="file-item text-brand-muted-light dark:!text-brand-muted-dark ${index === activeFileIndex ? 'file-item--active dark:!bg-[#2e3e37] dark:!text-brand-primary-dark' : 'hover:dark:!bg-[#263730]'}" data-file-index="${index}" type="button"><span class="file-type">${file.type}</span><span class="file-name" title="${file.path}">${file.path}</span>${commentCount > 0 ? `<span class="${badgeClass}" title="${badgeLabel}" aria-label="${badgeLabel}"><svg class="comment-badge__icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12h2.5v2.793a.5.5 0 0 0 .854.353L8.707 12H13.5a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 2h-11z"/></svg><span class="comment-badge__count">${commentCount}</span></span>` : ''}</button>`
-          }).join('')}
+      const fileComments = fileCommentsMap.get(file.path) ?? []
+      const commentCount = fileComments.length
+      const hasHighSeverity = fileComments.some((comment) => comment.severity === CommentSeverity.HIGH || (comment.severity as unknown) === 'alta')
+      const badgeClass = hasHighSeverity ? 'comment-badge comment-badge--alta' : 'comment-badge'
+      const badgeLabel = t('workspace.reviewProposalBadge', {
+        count: commentCount,
+        label: commentCount === 1 ? t('workspace.proposalWordSingular') : t('workspace.proposalWordPlural'),
+      })
+      return `<button class="file-item text-brand-muted-light dark:!text-brand-muted-dark ${index === activeFileIndex ? 'file-item--active dark:!bg-[#2e3e37] dark:!text-brand-primary-dark' : 'hover:dark:!bg-[#263730]'}" data-file-index="${index}" type="button"><span class="file-type">${file.type}</span><span class="file-name" title="${file.path}">${file.path}</span>${commentCount > 0 ? `<span class="${badgeClass}" title="${badgeLabel}" aria-label="${badgeLabel}"><svg class="comment-badge__icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12h2.5v2.793a.5.5 0 0 0 .854.353L8.707 12H13.5a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 13.5 2h-11z"/></svg><span class="comment-badge__count">${commentCount}</span></span>` : ''}</button>`
+    }).join('')}
           <div class="tree-summary border-brand-line-light text-brand-muted-light dark:!border-brand-line-dark dark:!text-brand-muted-dark"><span class="live-dot"></span> ${t('workspace.commentsCount', { count: workspaceComments.length })}</div>
         </aside>
         <main class="code-review-panel bg-[#fbfcfb] dark:!bg-brand-canvas-dark">
@@ -205,10 +205,10 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
           </div>
           <div class="code-frame">
             ${activeFile.lines.map((line, index) => {
-              const lineNumber = index + 1
-              const comments = activeFileComments.filter((comment) => comment.line === lineNumber)
-              return `<div class="code-line ${comments.length ? 'code-line--commented dark:!bg-[#352f19]' : ''}" data-line="${lineNumber}"><span class="line-number text-[#aab6ae] dark:!text-[#62776c]">${lineNumber}</span><code class="text-[#30433a] dark:!text-[#d6e2db]">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</code>${comments.length ? `<span class="line-marker" title="${t('workspace.lineCommentsMarker', { count: comments.length })}">●</span>` : ''}</div>`
-            }).join('')}
+      const lineNumber = index + 1
+      const comments = activeFileComments.filter((comment) => comment.line === lineNumber)
+      return `<div class="code-line ${comments.length ? 'code-line--commented dark:!bg-[#352f19]' : ''}" data-line="${lineNumber}"><span class="line-number text-[#aab6ae] dark:!text-[#62776c]">${lineNumber}</span><code class="text-[#30433a] dark:!text-[#d6e2db]">${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</code>${comments.length ? `<span class="line-marker" title="${t('workspace.lineCommentsMarker', { count: comments.length })}">●</span>` : ''}</div>`
+    }).join('')}
           </div>
         </main>
         <aside class="comments-panel bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark">
@@ -220,9 +220,9 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
             </div>
           </div>
           ${activeFileComments.length
-            ? activeFileComments.map((comment) => `<article class="review-comment bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark" data-comment-id="${comment.id ?? ''}"><div class="comment-meta text-brand-muted-light dark:!text-brand-muted-dark"><span class="severity severity--${severityClass(comment.severity)}">${tSeverity(comment.severity)}</span><span>${comment.file ? `${comment.file}${comment.line ? ':' + comment.line : ''}` : t('workspace.globalProposal')}</span></div><p class="text-brand-primary-light dark:!text-brand-primary-dark">${comment.message}</p><small class="text-brand-muted-light dark:!text-brand-muted-dark">${comment.author} · ${tCategory(comment.category)} · ${tDecision(comment.decision)}</small>${comment.id && !isReviewLocked ? `<div class="comment-actions"><button class="comment-action comment-action--edit bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.edit')}</button><button class="comment-action comment-action--delete bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.delete')}</button></div>` : ''}</article>`).join('')
-            : `<div class="comments-empty text-brand-muted-light dark:!text-brand-muted-dark dark:!border-brand-line-dark">${t('workspace.emptyComments')}</div>`
-          }
+      ? activeFileComments.map((comment) => `<article class="review-comment bg-brand-surface-light border-brand-line-light dark:!bg-brand-surface-dark dark:!border-brand-line-dark" data-comment-id="${comment.id ?? ''}"><div class="comment-meta text-brand-muted-light dark:!text-brand-muted-dark"><span class="severity severity--${severityClass(comment.severity)}">${tSeverity(comment.severity)}</span><span>${comment.file ? `${comment.file}${comment.line ? ':' + comment.line : ''}` : t('workspace.globalProposal')}</span></div><p class="text-brand-primary-light dark:!text-brand-primary-dark">${comment.message}</p><small class="text-brand-muted-light dark:!text-brand-muted-dark">${comment.author} · ${tCategory(comment.category)} · ${tDecision(comment.decision)}</small>${comment.id && !isReviewLocked ? `<div class="comment-actions"><button class="comment-action comment-action--edit bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.edit')}</button><button class="comment-action comment-action--delete bg-brand-surface-light border-brand-line-light text-brand-muted-light dark:!bg-brand-canvas-dark dark:!border-brand-line-dark dark:!text-brand-muted-dark" type="button">${t('common.delete')}</button></div>` : ''}</article>`).join('')
+      : `<div class="comments-empty text-brand-muted-light dark:!text-brand-muted-dark dark:!border-brand-line-dark">${t('workspace.emptyComments')}</div>`
+    }
         </aside>
       </div>
     </div>
@@ -312,15 +312,15 @@ export async function renderReviewWorkspace(app: HTMLElement, options: Workspace
           const { cancelReviewWorkflow } = await import('../review-runtime')
           cancelReviewWorkflow(review.id)
         }
-        if (decision === ReviewAction.APPROVE || (decision === ReviewAction.CLOSE && !isReviewProcessing(review))) {
+        if (decision === ReviewAction.APPROVE) {
           await publishPendingComments(review)
         }
         const nextStatus =
           decision === ReviewAction.APPROVE
             ? ReviewStatusConst.APPROVED
             : decision === ReviewAction.REOPEN
-            ? ReviewStatusConst.IN_PROGRESS
-            : ReviewStatusConst.CLOSED
+              ? ReviewStatusConst.IN_PROGRESS
+              : ReviewStatusConst.CLOSED
         await updateReviewStatus(review.id, nextStatus)
         await refreshReviews()
         navigate(decision === ReviewAction.REOPEN ? `#/reviews/${review.id}` : '#/reviews')

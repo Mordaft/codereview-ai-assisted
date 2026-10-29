@@ -1,7 +1,6 @@
 import Dexie from 'dexie'
 import {
   createLangGraphMemoryTools,
-  DexieMemoryStore,
   Engram,
   type CreateMemoryInput,
   type MemoryDocument,
@@ -53,9 +52,15 @@ export interface ReducedScopeSummary {
   }>
 }
 
+export interface InFlightScopeEntry {
+  ownerScopeId: string
+  promise: Promise<ScopeExecutionResult>
+}
+
 /**
- * In-memory implementation of engram-ts MemoryStore for environments without IndexedDB
- * (such as Node.js unit tests) while preserving full Lunr indexing through Engram.
+ * Fast, non-blocking MemoryStore implementation for `engram-ts` that keeps
+ * Lunr full-text indexing isolated per review session without blocking the browser UI thread
+ * on cross-review IndexedDB table scans.
  */
 export class InMemoryEngramStore implements MemoryStore {
   private readonly headers = new Map<string, MemoryHeader>()
@@ -110,7 +115,8 @@ export class InMemoryEngramStore implements MemoryStore {
   }
 
   close(): void {
-    // No-op for in-memory store
+    this.headers.clear()
+    this.records.clear()
   }
 }
 
@@ -144,17 +150,19 @@ export function computeScopeSignature(params: {
   const normSkill = normalizeScopeKeyText(params.skill ?? 'skill_general') || 'skill_general'
   const rangeStr = `${params.lineStart ?? 1}-${params.lineEnd ?? 'end'}`
   const codeHash = hashCodeSlice(params.codeSlice.trim())
-  const descWords = normalizeScopeKeyText(params.descripcion)
+  const normDesc = normalizeScopeKeyText(params.descripcion)
+  const descWords = normDesc
     .split(' ')
     .filter((w) => w.length > 2)
-    .slice(0, 8)
+    .slice(0, 10)
     .join('_')
-  const descHash = hashCodeSlice(descWords || normalizeScopeKeyText(params.descripcion))
+  const descHash = hashCodeSlice(descWords || normDesc)
 
   return {
-    sigTag: `sig:${params.filePath}:${rangeStr}:${normSkill}:${codeHash}`,
+    // Both sigTag and topicTag include descHash so distinct tasks on the same code range never collide
+    sigTag: `sig:${params.filePath}:${rangeStr}:${normSkill}:${codeHash}:${descHash}`,
     topicTag: `topic:${params.filePath}:${rangeStr}:${normSkill}:${descHash}`,
-    sliceTag: `slice:${codeHash}`,
+    sliceTag: `slice:${codeHash}:${descHash}`,
   }
 }
 
@@ -188,14 +196,20 @@ export function toReducedScopeSummary(result: ScopeExecutionResult): ReducedScop
 
 let sharedEngramInstance: Engram | undefined
 
+/**
+ * Creates a fresh, isolated `Engram` instance for a review run so that Lunr index rebuilds
+ * stay O(current_review_scopes) and never block the browser UI thread scanning historical reviews.
+ */
+export function createReviewEngram(customStore?: MemoryStore): Engram {
+  return new Engram({ store: customStore ?? new InMemoryEngramStore() })
+}
+
 export function getSharedEngram(customStore?: MemoryStore): Engram {
   if (customStore) {
     return new Engram({ store: customStore })
   }
   if (!sharedEngramInstance) {
-    const hasIndexedDb = typeof indexedDB !== 'undefined'
-    const store = hasIndexedDb ? new DexieMemoryStore(ENGRAM_DB_NAME) : new InMemoryEngramStore()
-    sharedEngramInstance = new Engram({ store })
+    sharedEngramInstance = new Engram({ store: new InMemoryEngramStore() })
   }
   return sharedEngramInstance
 }
@@ -224,15 +238,16 @@ export interface ReviewScopeStorageOptions {
   filePath: string
   scopeId: string
   parentScopeId?: string
+  ancestorScopeIds?: Set<string>
   depth?: number
-  inFlightMap?: Map<string, Promise<ScopeExecutionResult>>
+  inFlightMap?: Map<string, InFlightScopeEntry>
   scopeIdToMemoryIdMap?: Map<string, string>
 }
 
 /**
  * Hierarchical Scope Storage backed by engram-ts.
  * Manages saving decomposed task plans, atomic/consolidated scope results,
- * progressive disclosure via compact headers, and automatic reuse of previously
+ * progressive disclosure via compact headers, and deadlock-free reuse of previously
  * executed sub-scopes across the review tree.
  */
 export class ReviewScopeStorage {
@@ -241,8 +256,9 @@ export class ReviewScopeStorage {
   readonly filePath: string
   readonly scopeId: string
   readonly parentScopeId?: string
+  readonly ancestorScopeIds: Set<string>
   readonly depth: number
-  private readonly inFlightMap: Map<string, Promise<ScopeExecutionResult>>
+  private readonly inFlightMap: Map<string, InFlightScopeEntry>
   private readonly scopeIdToMemoryIdMap: Map<string, string>
 
   constructor(options: ReviewScopeStorageOptions) {
@@ -251,21 +267,26 @@ export class ReviewScopeStorage {
     this.filePath = options.filePath
     this.scopeId = options.scopeId
     this.parentScopeId = options.parentScopeId
+    this.ancestorScopeIds = options.ancestorScopeIds ?? new Set<string>()
     this.depth = options.depth ?? 0
-    this.inFlightMap = options.inFlightMap ?? new Map<string, Promise<ScopeExecutionResult>>()
+    this.inFlightMap = options.inFlightMap ?? new Map<string, InFlightScopeEntry>()
     this.scopeIdToMemoryIdMap = options.scopeIdToMemoryIdMap ?? new Map<string, string>()
   }
 
   /**
    * Creates an isolated child Scope Storage node descending from the current scope.
+   * Records `this.scopeId` in `ancestorScopeIds` so a child can NEVER deadlock awaiting an ancestor.
    */
   createChildScopeStorage(childScopeId: string): ReviewScopeStorage {
+    const nextAncestors = new Set(this.ancestorScopeIds)
+    nextAncestors.add(this.scopeId)
     return new ReviewScopeStorage({
       engram: this.engram,
       project: this.project,
       filePath: this.filePath,
       scopeId: childScopeId,
       parentScopeId: this.scopeId,
+      ancestorScopeIds: nextAncestors,
       depth: this.depth + 1,
       inFlightMap: this.inFlightMap,
       scopeIdToMemoryIdMap: this.scopeIdToMemoryIdMap,
@@ -281,19 +302,34 @@ export class ReviewScopeStorage {
   }
 
   /**
-   * Registers or awaits an in-flight scope execution so concurrent sibling scopes
-   * requesting the same analysis share the single execution instead of duplicating calls.
+   * Looks up an in-flight scope execution from a sibling/peer branch, strictly ignoring
+   * self and any ancestor scopes to prevent parent-child deadlocks.
    */
   getInFlight(signatureKey: string): Promise<ScopeExecutionResult> | undefined {
-    return this.inFlightMap.get(signatureKey)
+    const entry = this.inFlightMap.get(signatureKey)
+    if (!entry) return undefined
+    if (entry.ownerScopeId === this.scopeId || this.ancestorScopeIds.has(entry.ownerScopeId)) {
+      return undefined
+    }
+    return entry.promise
   }
 
   setInFlight(signatureKey: string, promise: Promise<ScopeExecutionResult>): void {
-    this.inFlightMap.set(signatureKey, promise)
+    const existing = this.inFlightMap.get(signatureKey)
+    if (existing && this.ancestorScopeIds.has(existing.ownerScopeId)) {
+      return
+    }
+    this.inFlightMap.set(signatureKey, {
+      ownerScopeId: this.scopeId,
+      promise,
+    })
   }
 
   clearInFlight(signatureKey: string): void {
-    this.inFlightMap.delete(signatureKey)
+    const existing = this.inFlightMap.get(signatureKey)
+    if (existing && existing.ownerScopeId === this.scopeId) {
+      this.inFlightMap.delete(signatureKey)
+    }
   }
 
   /**
@@ -460,7 +496,12 @@ export class ReviewScopeStorage {
 
     return results
       .map((r) => r.header)
-      .filter((h) => h.tags.includes('scope-result') && h.tags.includes(`file:${this.filePath}`))
+      .filter(
+        (h) =>
+          h.tags.includes('scope-result') &&
+          h.tags.includes(`file:${this.filePath}`) &&
+          ![...this.ancestorScopeIds].some((ancId) => h.tags.includes(`scope:${ancId}`)),
+      )
       .slice(0, limit)
   }
 
@@ -482,9 +523,13 @@ export class ReviewScopeStorage {
       descripcion: task.descripcion,
     })
 
-    // 1. Check in-flight concurrent executions first
+    // 1. Check in-flight concurrent sibling executions (never self or ancestors)
     const inFlight = this.getInFlight(sigTag) ?? this.getInFlight(topicTag)
     if (inFlight) {
+      trace('engram.scope.inflight_awaiting', {
+        requestedScopeId: this.scopeId,
+        sigTag,
+      })
       const resolved = await inFlight
       trace('engram.scope.inflight_reused', {
         requestedScopeId: this.scopeId,
@@ -511,20 +556,29 @@ export class ReviewScopeStorage {
 
     const resultHeaders = candidates
       .map((c) => c.header)
-      .filter((h) => h.tags.includes('scope-result'))
+      .filter(
+        (h) =>
+          h.tags.includes('scope-result') &&
+          ![...this.ancestorScopeIds].some((ancId) => h.tags.includes(`scope:${ancId}`)),
+      )
 
     const targetSkillTag = `skill:${task.skill_requerida ?? 'skill_general'}`
     const matchedHeader = resultHeaders.find((header) => {
-      // Exact code-slice + skill + range signature match
+      // Exact code-slice + skill + range + description signature match
       if (header.tags.includes(sigTag)) return true
       // Exact file + range + skill + normalized task topic match
       if (header.tags.includes(topicTag)) return true
-      // Same code slice fingerprint + same skill (even if across different scope IDs)
+      // Same code slice + task description fingerprint + same skill
       if (header.tags.includes(sliceTag) && header.tags.includes(targetSkillTag) && header.tags.includes(`file:${this.filePath}`)) {
         return true
       }
-      // Same scope ID explicitly already completed in this file
-      if (task.id_subtarea && header.tags.includes(`scope:${task.id_subtarea}`) && header.tags.includes(`file:${this.filePath}`)) {
+      // Same explicit non-ancestor scope ID already completed in this file
+      if (
+        task.id_subtarea &&
+        !this.ancestorScopeIds.has(task.id_subtarea) &&
+        header.tags.includes(`scope:${task.id_subtarea}`) &&
+        header.tags.includes(`file:${this.filePath}`)
+      ) {
         return true
       }
       return false
@@ -608,4 +662,3 @@ export class ReviewScopeStorage {
     }
   }
 }
-

@@ -6,9 +6,9 @@ import {
   StateGraph,
 } from '@langchain/langgraph'
 import { clearSlmSuggestions, listReviewFiles, saveSlmSuggestions, updateReviewAnalysisMetrics, updateReviewProgress, updateReviewStatus } from './review-db'
-import { analyzeFileWithSlm } from './slm-client'
+import { analyzeFileWithSlm, SlmConcurrencyGate } from './slm-client'
 import { getSlmConfig } from './slm-config'
-import { getSharedEngram } from './review-memory'
+import { createReviewEngram } from './review-memory'
 import { selectAnalyzableReviewFiles } from './review-scope'
 import { emitReviewProgress, emitReviewThinking } from './review-events'
 import { trace } from './diagnostics'
@@ -108,11 +108,15 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
   const startedAt = performance.now()
   const files = await listReviewFiles(state.reviewId)
   const analyzableFiles = selectAnalyzableReviewFiles(files)
-  const engram = getSharedEngram()
+  const slmConfig = getSlmConfig()
+  const engram = createReviewEngram()
+  const concurrencyGate = new SlmConcurrencyGate(slmConfig.maxConcurrency)
   const projectScope = `review-${state.reviewId}`
   trace('slm.analysis.scope', { reviewId: state.reviewId, projectScope, totalFiles: files.length, analyzableFiles: analyzableFiles.length, skippedFiles: files.length - analyzableFiles.length })
   await clearSlmSuggestions(state.reviewId)
   const suggestions: ReviewSuggestion[] = []
+  let lastThinkingEmitAt = 0
+  const THINKING_EMIT_THROTTLE_MS = 100
   for (const [index, file] of analyzableFiles.entries()) {
     if (signal.aborted) {
       trace('slm.analysis.aborted', { reviewId: state.reviewId, atFile: file.path })
@@ -165,6 +169,9 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
         },
         (thought) => {
           if (signal.aborted) return
+          const now = performance.now()
+          if (now - lastThinkingEmitAt < THINKING_EMIT_THROTTLE_MS) return
+          lastThinkingEmitAt = now
           emitReviewThinking({
             reviewId: state.reviewId,
             filePath: file.path,
@@ -179,6 +186,9 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
           reviewId: state.reviewId,
           project: projectScope,
           engram,
+          maxDepth: slmConfig.maxDepth,
+          maxConcurrency: slmConfig.maxConcurrency,
+          concurrencyGate,
         },
       )
     } catch (err) {
@@ -218,11 +228,17 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
     trace('slm.file.complete', { reviewId: state.reviewId, filePath: file.path, suggestions: validSuggestions.length })
   }
 
+  try {
+    await engram.close()
+  } catch {
+    // Ignore close errors
+  }
+
   const elapsedMs = Math.round(performance.now() - startedAt)
   await updateReviewAnalysisMetrics(state.reviewId, {
     processingTimeMs: elapsedMs,
     processedFilesCount: analyzableFiles.length,
-    model: getSlmConfig().model,
+    model: slmConfig.model,
   })
 
   activeReviewControllers.delete(state.reviewId)

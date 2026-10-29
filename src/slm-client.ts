@@ -5,6 +5,7 @@ import { trace } from './diagnostics'
 import { CommentCategory, CommentSeverity } from './enums'
 import {
   computeScopeSignature,
+  normalizeScopeKeyText,
   ReviewScopeStorage,
   toReducedScopeSummary,
   type ReviewSkillName,
@@ -29,6 +30,8 @@ export interface AnalyzeFileOptions {
   engram?: Engram
   maxDepth?: number
   maxConcurrency?: number
+  requestTimeoutMs?: number
+  concurrencyGate?: SlmConcurrencyGate
 }
 
 interface RawToolCallDelta {
@@ -87,7 +90,7 @@ export interface OpenAiToolSpec {
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  content: string
   tool_call_id?: string
   name?: string
   tool_calls?: Array<{
@@ -98,6 +101,79 @@ export interface ChatMessage {
       arguments: string
     }
   }>
+}
+
+const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 90_000
+const MAX_SUBTASKS_PER_SCOPE = 6
+
+/**
+ * Request-level concurrency gate (FIFO semaphore) that limits the number of simultaneous
+ * HTTP requests to the local SLM runtime across the entire recursion tree.
+ * Because parent scopes release their slot as soon as Step 1 completes (before awaiting children),
+ * parent-child semaphore deadlocks are impossible and browser HTTP connection pools are never exhausted.
+ */
+export class SlmConcurrencyGate {
+  private active = 0
+  private readonly queue: Array<() => void> = []
+  private readonly limit: number
+
+  constructor(maxConcurrent: number) {
+    this.limit = Math.max(1, maxConcurrent)
+  }
+
+  async acquire(signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
+    }
+    if (this.active < this.limit) {
+      this.active += 1
+      let released = false
+      return () => {
+        if (released) return
+        released = true
+        this.release()
+      }
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      let settled = false
+      const onAbort = () => {
+        if (settled) return
+        settled = true
+        const idx = this.queue.indexOf(wake)
+        if (idx >= 0) this.queue.splice(idx, 1)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }
+
+      const wake = () => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        let released = false
+        resolve(() => {
+          if (released) return
+          released = true
+          this.release()
+        })
+      }
+
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.queue.push(wake)
+    })
+  }
+
+  private release(): void {
+    const next = this.queue.shift()
+    if (next) {
+      next()
+    } else {
+      this.active = Math.max(0, this.active - 1)
+    }
+  }
+}
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 function parseSeverity(val: unknown): CommentSeverity {
@@ -320,7 +396,7 @@ export function parseSuggestions(content: string, allowEmpty = false, fallbackFi
 }
 
 /**
- * Executes async tasks with a maximum concurrency limit to avoid saturating the local SLM runtime.
+ * Executes async tasks with a maximum concurrency limit.
  */
 export async function runWithConcurrency<T, R>(
   items: T[],
@@ -626,390 +702,456 @@ interface SlmToolCallResponse {
 
 async function callSlmWithTools(params: {
   file: StoredReviewFile
+  scopeId?: string
   messages: ChatMessage[]
   tools: OpenAiToolSpec[]
   toolChoice?: 'none' | 'auto' | 'required'
   streamSuggestionsToCallback?: boolean
+  concurrencyGate?: SlmConcurrencyGate
+  requestTimeoutMs?: number
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>
   onThinking?: (thought: string) => void | Promise<void>
   signal?: AbortSignal
 }): Promise<SlmToolCallResponse> {
-  const config = getSlmConfig()
-  const startedAt = performance.now()
   const { file, messages, tools, onSuggestion, onThinking, signal } = params
-  const toolChoice = params.toolChoice ?? 'required'
+  const releaseGate = params.concurrencyGate
+    ? await params.concurrencyGate.acquire(signal)
+    : () => {}
 
-  trace('slm.stream.start', {
-    filePath: file.path,
-    model: config.model,
-    maxTokens: config.maxTokens,
-    tools: tools.map((t) => t.function.name),
-  })
+  const inactivityTimeoutMs = params.requestTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS
+  const requestAbortController = new AbortController()
+  let timedOut = false
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined
 
-  const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal,
-    body: JSON.stringify({
-      model: config.model,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      max_completion_tokens: config.maxTokens,
-      stream: true,
-      verbosity: 'low',
-      chat_template_kwargs: {
-        enable_thinking: true,
-      },
-      tools,
-      tool_choice: toolChoice,
-      messages,
-    }),
-  })
+  const resetInactivityTimer = () => {
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+    inactivityTimer = setTimeout(() => {
+      timedOut = true
+      requestAbortController.abort()
+    }, inactivityTimeoutMs)
+  }
 
-  trace('slm.stream.response_status', {
-    filePath: file.path,
-    status: response.status,
-    statusText: response.statusText,
-    ok: response.ok,
-  })
+  const onParentAbort = () => {
+    requestAbortController.abort()
+  }
+  signal?.addEventListener('abort', onParentAbort, { once: true })
+  if (signal?.aborted) {
+    requestAbortController.abort()
+  }
 
-  if (!response.ok) {
-    const errorDetail = await response.text().catch(() => '')
-    trace('slm.stream.response_error', {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+
+  try {
+    const config = getSlmConfig()
+    const startedAt = performance.now()
+    const toolChoice = params.toolChoice ?? 'required'
+
+    trace('slm.stream.start', {
       filePath: file.path,
-      status: response.status,
-      errorDetail: errorDetail.slice(0, 500),
+      scopeId: params.scopeId,
+      model: config.model,
+      maxTokens: config.maxTokens,
+      tools: tools.map((t) => t.function.name),
     })
-    throw new Error(`El runtime SLM respondio ${response.status}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : '.'}`)
-  }
-  if (!response.body) {
-    throw new Error('El runtime SLM no devolvio un cuerpo de respuesta.')
-  }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let streamBuffer = ''
-  let rawResponseText = ''
-  let contentBuffer = ''
-  let finishReason: string | null = null
-  let reasoningChars = 0
-  let contentChars = 0
-  let accumulatedThought = ''
+    resetInactivityTimer()
 
-  let inThinkTag = false
-  let thinkTagBuffer = ''
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: requestAbortController.signal,
+      body: JSON.stringify({
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: config.maxTokens,
+        max_completion_tokens: config.maxTokens,
+        stream: true,
+        verbosity: 'low',
+        chat_template_kwargs: {
+          enable_thinking: true,
+        },
+        tools,
+        tool_choice: toolChoice,
+        messages,
+      }),
+    })
 
-  const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>()
+    resetInactivityTimer()
 
-  function recordToolCallDelta(
-    idx: number,
-    id: string | undefined,
-    name: string | undefined,
-    argsChunk: string | undefined,
-  ) {
-    const existing = toolCallsMap.get(idx) ?? {
-      id: id || `call_${idx}_${Date.now()}`,
-      name: '',
-      arguments: '',
+    trace('slm.stream.response_status', {
+      filePath: file.path,
+      scopeId: params.scopeId,
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok,
+    })
+
+    if (!response.ok) {
+      const errorDetail = await response.text().catch(() => '')
+      trace('slm.stream.response_error', {
+        filePath: file.path,
+        scopeId: params.scopeId,
+        status: response.status,
+        errorDetail: errorDetail.slice(0, 500),
+      })
+      throw new Error(`El runtime SLM respondio ${response.status}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : '.'}`)
     }
-    if (id) existing.id = id
-    if (name) existing.name = existing.name ? existing.name : name
-    if (typeof argsChunk === 'string') {
-      existing.arguments += argsChunk
+    if (!response.body) {
+      throw new Error('El runtime SLM no devolvio un cuerpo de respuesta.')
     }
-    toolCallsMap.set(idx, existing)
-    if (params.streamSuggestionsToCallback && existing.arguments.length > 0) {
-      checkIncrementalSuggestions(existing.arguments)
+
+    reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let streamBuffer = ''
+    let rawResponseText = ''
+    let contentBuffer = ''
+    let finishReason: string | null = null
+    let reasoningChars = 0
+    let contentChars = 0
+    let accumulatedThought = ''
+
+    let inThinkTag = false
+    let thinkTagBuffer = ''
+
+    const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>()
+
+    function recordToolCallDelta(
+      idx: number,
+      id: string | undefined,
+      name: string | undefined,
+      argsChunk: string | undefined,
+    ) {
+      const existing = toolCallsMap.get(idx) ?? {
+        id: id || `call_${idx}_${Date.now()}`,
+        name: '',
+        arguments: '',
+      }
+      if (id) existing.id = id
+      if (name) existing.name = existing.name ? existing.name : name
+      if (typeof argsChunk === 'string') {
+        existing.arguments += argsChunk
+      }
+      toolCallsMap.set(idx, existing)
+      if (params.streamSuggestionsToCallback && existing.arguments.length > 0) {
+        checkIncrementalSuggestions(existing.arguments)
+      }
     }
-  }
 
-  function processContentDelta(text: string): string {
-    let combined = thinkTagBuffer + text
-    thinkTagBuffer = ''
-    let clean = ''
+    function processContentDelta(text: string): string {
+      let combined = thinkTagBuffer + text
+      thinkTagBuffer = ''
+      let clean = ''
 
-    while (combined.length > 0) {
-      if (!inThinkTag) {
-        const openIdx = combined.indexOf('<think>')
-        if (openIdx !== -1) {
-          clean += combined.slice(0, openIdx)
-          inThinkTag = true
-          combined = combined.slice(openIdx + 7)
-        } else {
-          const possiblePartial = combined.match(/<t(?:h(?:i(?:n(?:k)?)?)?)?$/)
-          if (possiblePartial && possiblePartial.index !== undefined) {
-            clean += combined.slice(0, possiblePartial.index)
-            thinkTagBuffer = possiblePartial[0]
-            combined = ''
+      while (combined.length > 0) {
+        if (!inThinkTag) {
+          const openIdx = combined.indexOf('<think>')
+          if (openIdx !== -1) {
+            clean += combined.slice(0, openIdx)
+            inThinkTag = true
+            combined = combined.slice(openIdx + 7)
           } else {
-            clean += combined
-            combined = ''
-          }
-        }
-      } else {
-        const closeIdx = combined.indexOf('</think>')
-        if (closeIdx !== -1) {
-          const thinkChunk = combined.slice(0, closeIdx)
-          accumulatedThought += thinkChunk
-          reasoningChars += closeIdx
-          inThinkTag = false
-          combined = combined.slice(closeIdx + 8)
-          if (onThinking) {
-            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+            const possiblePartial = combined.match(/<t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+            if (possiblePartial && possiblePartial.index !== undefined) {
+              clean += combined.slice(0, possiblePartial.index)
+              thinkTagBuffer = possiblePartial[0]
+              combined = ''
+            } else {
+              clean += combined
+              combined = ''
+            }
           }
         } else {
-          const possiblePartial = combined.match(/<\/t(?:h(?:i(?:n(?:k)?)?)?)?$/)
-          if (possiblePartial && possiblePartial.index !== undefined) {
-            const thinkChunk = combined.slice(0, possiblePartial.index)
+          const closeIdx = combined.indexOf('</think>')
+          if (closeIdx !== -1) {
+            const thinkChunk = combined.slice(0, closeIdx)
             accumulatedThought += thinkChunk
-            reasoningChars += possiblePartial.index
-            thinkTagBuffer = possiblePartial[0]
-            combined = ''
+            reasoningChars += closeIdx
+            inThinkTag = false
+            combined = combined.slice(closeIdx + 8)
+            if (onThinking) {
+              try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+            }
           } else {
-            accumulatedThought += combined
-            reasoningChars += combined.length
-            combined = ''
-          }
-          if (onThinking) {
-            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+            const possiblePartial = combined.match(/<\/t(?:h(?:i(?:n(?:k)?)?)?)?$/)
+            if (possiblePartial && possiblePartial.index !== undefined) {
+              const thinkChunk = combined.slice(0, possiblePartial.index)
+              accumulatedThought += thinkChunk
+              reasoningChars += possiblePartial.index
+              thinkTagBuffer = possiblePartial[0]
+              combined = ''
+            } else {
+              accumulatedThought += combined
+              reasoningChars += combined.length
+              combined = ''
+            }
+            if (onThinking) {
+              try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+            }
           }
         }
       }
+      return clean
     }
-    return clean
-  }
 
-  const seenSuggestionKeys = new Set<string>()
-  const streamedSuggestions: SlmSuggestion[] = []
+    const seenSuggestionKeys = new Set<string>()
+    const streamedSuggestions: SlmSuggestion[] = []
 
-  function checkIncrementalSuggestions(currentContent: string) {
-    const rawObjects = completeJsonObjects(currentContent)
-    if (rawObjects.length === 0) return
-    const itemsToCheck: unknown[] = []
-    for (const raw of rawObjects) {
-      try {
-        const parsed = JSON.parse(raw) as unknown
-        if (parsed && typeof parsed === 'object') {
-          if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown[] }).suggestions)) {
-            itemsToCheck.push(...(parsed as { suggestions: unknown[] }).suggestions)
-          } else if (
-            ('message' in parsed || 'description' in parsed || 'recommendation' in parsed || 'suggestion' in parsed) &&
-            !('subtareas' in parsed) &&
-            !('skill_a_usar' in parsed)
-          ) {
-            itemsToCheck.push(parsed)
+    function checkIncrementalSuggestions(currentContent: string) {
+      const rawObjects = completeJsonObjects(currentContent)
+      if (rawObjects.length === 0) return
+      const itemsToCheck: unknown[] = []
+      for (const raw of rawObjects) {
+        try {
+          const parsed = JSON.parse(raw) as unknown
+          if (parsed && typeof parsed === 'object') {
+            if ('suggestions' in parsed && Array.isArray((parsed as { suggestions: unknown[] }).suggestions)) {
+              itemsToCheck.push(...(parsed as { suggestions: unknown[] }).suggestions)
+            } else if (
+              ('message' in parsed || 'description' in parsed || 'recommendation' in parsed || 'suggestion' in parsed) &&
+              !('subtareas' in parsed) &&
+              !('skill_a_usar' in parsed)
+            ) {
+              itemsToCheck.push(parsed)
+            }
           }
+        } catch {
+          // Skip incomplete or unparseable object slice
         }
-      } catch {
-        // Skip incomplete or unparseable object slice
       }
-    }
-    if (itemsToCheck.length > 0) {
-      const normalized = normalizeSuggestions(itemsToCheck, file.path)
-      for (const suggestion of normalized) {
-        const genericReason = getGenericFilterReason(suggestion)
-        if (genericReason !== null) {
-          const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
-          if (!seenSuggestionKeys.has(key)) {
-            seenSuggestionKeys.add(key)
-            trace('slm.suggestion.discarded', {
-              filePath: suggestion.filePath,
-              line: suggestion.line,
-              reason: 'generic_filter_stream',
-              detail: genericReason,
-              message: suggestion.message,
-            })
-          }
-          continue
-        }
-        const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
-        if (seenSuggestionKeys.has(key)) {
-          continue
-        }
-        seenSuggestionKeys.add(key)
-        streamedSuggestions.push(suggestion)
-        trace('slm.stream.suggestion_detected', {
-          filePath: suggestion.filePath,
-          line: suggestion.line,
-          id: suggestion.id,
-          severity: suggestion.severity,
-          category: suggestion.category,
-        })
-        if (onSuggestion) {
-          try {
-            const maybePromise = onSuggestion(suggestion)
-            if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
-              (maybePromise as Promise<void>).catch((err: unknown) => {
-                trace('slm.stream.callback_error', {
-                  filePath: file.path,
-                  error: err instanceof Error ? err.message : String(err),
-                })
+      if (itemsToCheck.length > 0) {
+        const normalized = normalizeSuggestions(itemsToCheck, file.path)
+        for (const suggestion of normalized) {
+          const genericReason = getGenericFilterReason(suggestion)
+          if (genericReason !== null) {
+            const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
+            if (!seenSuggestionKeys.has(key)) {
+              seenSuggestionKeys.add(key)
+              trace('slm.suggestion.discarded', {
+                filePath: suggestion.filePath,
+                line: suggestion.line,
+                reason: 'generic_filter_stream',
+                detail: genericReason,
+                message: suggestion.message,
               })
             }
-          } catch (err) {
-            trace('slm.stream.callback_error', {
-              filePath: file.path,
-              error: err instanceof Error ? err.message : String(err),
-            })
+            continue
+          }
+          const key = `${suggestion.filePath}:${suggestion.line}:${normalizeText(suggestion.message)}`
+          if (seenSuggestionKeys.has(key)) {
+            continue
+          }
+          seenSuggestionKeys.add(key)
+          streamedSuggestions.push(suggestion)
+          trace('slm.stream.suggestion_detected', {
+            filePath: suggestion.filePath,
+            line: suggestion.line,
+            id: suggestion.id,
+            severity: suggestion.severity,
+            category: suggestion.category,
+          })
+          if (onSuggestion) {
+            try {
+              const maybePromise = onSuggestion(suggestion)
+              if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+                (maybePromise as Promise<void>).catch((err: unknown) => {
+                  trace('slm.stream.callback_error', {
+                    filePath: file.path,
+                    error: err instanceof Error ? err.message : String(err),
+                  })
+                })
+              }
+            } catch (err) {
+              trace('slm.stream.callback_error', {
+                filePath: file.path,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
           }
         }
       }
     }
-  }
 
-  function handleParsedChunk(parsed: ChatCompletionChunk) {
-    const choice = parsed.choices?.[0]
-    if (!choice) return
-    if (choice.finish_reason) finishReason = choice.finish_reason
+    function handleParsedChunk(parsed: ChatCompletionChunk) {
+      const choice = parsed.choices?.[0]
+      if (!choice) return
+      if (choice.finish_reason) finishReason = choice.finish_reason
 
-    const delta = choice.delta
-    if (delta) {
-      const rawReasoning = delta.reasoning_content ?? delta.reasoning
-      if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
-        accumulatedThought += rawReasoning
-        reasoningChars += rawReasoning.length
+      const delta = choice.delta
+      if (delta) {
+        const rawReasoning = delta.reasoning_content ?? delta.reasoning
+        if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
+          accumulatedThought += rawReasoning
+          reasoningChars += rawReasoning.length
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
+        }
+
+        if (Array.isArray(delta.tool_calls)) {
+          for (const [idx, tc] of delta.tool_calls.entries()) {
+            recordToolCallDelta(tc.index ?? idx, tc.id, tc.function?.name, tc.function?.arguments)
+          }
+        }
+
+        if (typeof delta.content === 'string' && delta.content.length > 0) {
+          const cleanDelta = processContentDelta(delta.content)
+          if (cleanDelta.length > 0) {
+            contentBuffer += cleanDelta
+            contentChars += cleanDelta.length
+            if (params.streamSuggestionsToCallback) {
+              checkIncrementalSuggestions(contentBuffer)
+            }
+          }
+        }
+      }
+
+      const message = choice.message
+      if (message) {
+        const rawReasoning = message.reasoning_content ?? message.reasoning
+        if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
+          accumulatedThought += rawReasoning
+          reasoningChars += rawReasoning.length
+          if (onThinking) {
+            try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
+          }
+        }
+
+        if (Array.isArray(message.tool_calls)) {
+          for (const [idx, tc] of message.tool_calls.entries()) {
+            recordToolCallDelta(idx, tc.id, tc.function?.name, tc.function?.arguments)
+          }
+        }
+
+        if (typeof message.content === 'string' && message.content.length > 0) {
+          const cleanContent = processContentDelta(message.content)
+          if (cleanContent.length > 0) {
+            contentBuffer += cleanContent
+            contentChars += cleanContent.length
+            if (params.streamSuggestionsToCallback) {
+              checkIncrementalSuggestions(contentBuffer)
+            }
+          }
+        }
+      }
+    }
+
+    while (true) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const { done, value } = await reader.read()
+      resetInactivityTimer()
+      if (done) break
+
+      const decoded = decoder.decode(value, { stream: true })
+      rawResponseText += decoded
+      streamBuffer += decoded
+      const lines = streamBuffer.split('\n')
+      streamBuffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const dataStr = trimmed.slice(5).trim()
+        if (dataStr === '[DONE]') continue
+
+        try {
+          const parsed = JSON.parse(dataStr) as ChatCompletionChunk
+          handleParsedChunk(parsed)
+        } catch {
+          // Skip unparseable SSE chunk
+        }
+      }
+    }
+
+    if (streamBuffer.trim().startsWith('data:')) {
+      const dataStr = streamBuffer.trim().slice(5).trim()
+      if (dataStr !== '[DONE]') {
+        try {
+          const parsed = JSON.parse(dataStr) as ChatCompletionChunk
+          handleParsedChunk(parsed)
+        } catch {
+          // Skip
+        }
+      }
+    } else if (toolCallsMap.size === 0 && contentBuffer.length === 0 && rawResponseText.trim().startsWith('{')) {
+      // Support non-SSE standard JSON response bodies from runtimes or test mocks
+      try {
+        const parsed = JSON.parse(rawResponseText.trim()) as ChatCompletionChunk
+        handleParsedChunk(parsed)
+      } catch {
+        // Ignore
+      }
+    }
+
+    if (thinkTagBuffer.length > 0) {
+      if (inThinkTag) {
+        accumulatedThought += thinkTagBuffer
+        reasoningChars += thinkTagBuffer.length
         if (onThinking) {
           try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
         }
-      }
-
-      if (Array.isArray(delta.tool_calls)) {
-        for (const [idx, tc] of delta.tool_calls.entries()) {
-          recordToolCallDelta(tc.index ?? idx, tc.id, tc.function?.name, tc.function?.arguments)
-        }
-      }
-
-      if (typeof delta.content === 'string' && delta.content.length > 0) {
-        const cleanDelta = processContentDelta(delta.content)
-        if (cleanDelta.length > 0) {
-          contentBuffer += cleanDelta
-          contentChars += cleanDelta.length
-          if (params.streamSuggestionsToCallback) {
-            checkIncrementalSuggestions(contentBuffer)
-          }
-        }
+      } else {
+        contentBuffer += thinkTagBuffer
+        contentChars += thinkTagBuffer.length
       }
     }
 
-    const message = choice.message
-    if (message) {
-      const rawReasoning = message.reasoning_content ?? message.reasoning
-      if (typeof rawReasoning === 'string' && rawReasoning.length > 0) {
-        accumulatedThought += rawReasoning
-        reasoningChars += rawReasoning.length
-        if (onThinking) {
-          try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
-        }
-      }
+    const toolCalls: ParsedToolCall[] = [...toolCallsMap.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, tc]) => ({
+        id: tc.id,
+        name: tc.name,
+        argumentsRaw: tc.arguments,
+        args: safeParseJsonObject(tc.arguments),
+      }))
+      .filter((tc) => tc.name.length > 0)
 
-      if (Array.isArray(message.tool_calls)) {
-        for (const [idx, tc] of message.tool_calls.entries()) {
-          recordToolCallDelta(idx, tc.id, tc.function?.name, tc.function?.arguments)
-        }
-      }
+    trace('slm.stream.complete', {
+      filePath: file.path,
+      scopeId: params.scopeId,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      reasoningChars,
+      contentChars,
+      finishReason,
+      toolCallsCount: toolCalls.length,
+      toolNames: toolCalls.map((t) => t.name),
+      streamedCount: streamedSuggestions.length,
+    })
 
-      if (typeof message.content === 'string' && message.content.length > 0) {
-        const cleanContent = processContentDelta(message.content)
-        if (cleanContent.length > 0) {
-          contentBuffer += cleanContent
-          contentChars += cleanContent.length
-          if (params.streamSuggestionsToCallback) {
-            checkIncrementalSuggestions(contentBuffer)
-          }
-        }
-      }
+    return {
+      toolCalls,
+      contentBuffer,
+      finishReason,
+      reasoningChars,
+      streamedSuggestions,
     }
-  }
-
-  while (true) {
-    if (signal?.aborted) {
-      reader.cancel().catch(() => {})
-      throw new DOMException('Aborted', 'AbortError')
+  } catch (err) {
+    if (timedOut && !signal?.aborted) {
+      trace('slm.stream.timeout', {
+        filePath: file.path,
+        scopeId: params.scopeId,
+        timeoutMs: inactivityTimeoutMs,
+      })
+      throw new Error(`El runtime SLM excedió el tiempo de espera de inactividad (${Math.round(inactivityTimeoutMs / 1000)}s).`)
     }
-    const { done, value } = await reader.read()
-    if (done) break
-
-    const decoded = decoder.decode(value, { stream: true })
-    rawResponseText += decoded
-    streamBuffer += decoded
-    const lines = streamBuffer.split('\n')
-    streamBuffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('data:')) continue
-      const dataStr = trimmed.slice(5).trim()
-      if (dataStr === '[DONE]') continue
-
+    throw err
+  } finally {
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+    signal?.removeEventListener('abort', onParentAbort)
+    if (reader) {
       try {
-        const parsed = JSON.parse(dataStr) as ChatCompletionChunk
-        handleParsedChunk(parsed)
+        await reader.cancel()
       } catch {
-        // Skip unparseable SSE chunk
+        // Ignore cancel errors
       }
-    }
-  }
-
-  if (streamBuffer.trim().startsWith('data:')) {
-    const dataStr = streamBuffer.trim().slice(5).trim()
-    if (dataStr !== '[DONE]') {
       try {
-        const parsed = JSON.parse(dataStr) as ChatCompletionChunk
-        handleParsedChunk(parsed)
+        reader.releaseLock()
       } catch {
-        // Skip
+        // Ignore lock release errors
       }
     }
-  } else if (toolCallsMap.size === 0 && contentBuffer.length === 0 && rawResponseText.trim().startsWith('{')) {
-    // Support non-SSE standard JSON response bodies from runtimes or test mocks
-    try {
-      const parsed = JSON.parse(rawResponseText.trim()) as ChatCompletionChunk
-      handleParsedChunk(parsed)
-    } catch {
-      // Ignore
-    }
-  }
-
-  if (thinkTagBuffer.length > 0) {
-    if (inThinkTag) {
-      accumulatedThought += thinkTagBuffer
-      reasoningChars += thinkTagBuffer.length
-      if (onThinking) {
-        try { void onThinking(accumulatedThought) } catch { /* Ignore callback error */ }
-      }
-    } else {
-      contentBuffer += thinkTagBuffer
-      contentChars += thinkTagBuffer.length
-    }
-  }
-
-  const toolCalls: ParsedToolCall[] = [...toolCallsMap.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, tc]) => ({
-      id: tc.id,
-      name: tc.name,
-      argumentsRaw: tc.arguments,
-      args: safeParseJsonObject(tc.arguments),
-    }))
-    .filter((tc) => tc.name.length > 0)
-
-  trace('slm.stream.complete', {
-    filePath: file.path,
-    elapsedMs: Math.round(performance.now() - startedAt),
-    reasoningChars,
-    contentChars,
-    finishReason,
-    toolCallsCount: toolCalls.length,
-    toolNames: toolCalls.map((t) => t.name),
-    streamedCount: streamedSuggestions.length,
-  })
-
-  return {
-    toolCalls,
-    contentBuffer,
-    finishReason,
-    reasoningChars,
-    streamedSuggestions,
+    releaseGate()
   }
 }
 
@@ -1018,6 +1160,8 @@ interface ScopeExecutionContext {
   baseInstructions: string
   maxDepth: number
   maxConcurrency: number
+  concurrencyGate: SlmConcurrencyGate
+  requestTimeoutMs?: number
   onSuggestion?: (suggestion: SlmSuggestion) => void | Promise<void>
   onThinking?: (thought: string) => void | Promise<void>
   signal?: AbortSignal
@@ -1067,6 +1211,7 @@ async function ejecutarSkillLocal(
 
   const response = await callSlmWithTools({
     file: context.file,
+    scopeId: storage.scopeId,
     messages: [
       { role: 'system', content: skillSystemPrompt },
       { role: 'user', content: userPrompt },
@@ -1074,6 +1219,8 @@ async function ejecutarSkillLocal(
     tools: buildAtomicSkillTools(),
     toolChoice: 'required',
     streamSuggestionsToCallback: true,
+    concurrencyGate: context.concurrencyGate,
+    requestTimeoutMs: context.requestTimeoutMs,
     onSuggestion: context.onSuggestion,
     onThinking: context.onThinking,
     signal: context.signal,
@@ -1122,6 +1269,20 @@ async function llamarLLMParaReduccion(
   storage: ReviewScopeStorage,
   context: ScopeExecutionContext,
 ): Promise<{ sumario_ejecutivo: string; suggestions: SlmSuggestion[] }> {
+  const childSuggestions = resultadosSubHilos.flatMap((r) => r.suggestions)
+  const fallbackSummary = resultadosSubHilos
+    .map((r) => `[${r.id_scope}] ${r.sumario_ejecutivo}`)
+    .join(' | ')
+    .slice(0, 320)
+
+  // Fast-path: if there is at most 1 child scope or 0 findings across all child scopes, consolidate deterministically
+  if (resultadosSubHilos.length <= 1 || childSuggestions.length === 0) {
+    return {
+      sumario_ejecutivo: fallbackSummary || `Scope ${storage.scopeId} consolidado sin hallazgos.`,
+      suggestions: filterSuggestions(childSuggestions),
+    }
+  }
+
   const reducedPayload = {
     estado: 'exitoso',
     scope_padre: storage.scopeId,
@@ -1146,110 +1307,122 @@ async function llamarLLMParaReduccion(
     },
   ]
 
-  // First reduction turn (allows `consultar_detalle_scope` or `consolidar_resultados_scope`)
-  let response = await callSlmWithTools({
-    file: context.file,
-    messages,
-    tools: buildReductionTools(true),
-    toolChoice: 'required',
-    streamSuggestionsToCallback: true,
-    onSuggestion: context.onSuggestion,
-    onThinking: context.onThinking,
-    signal: context.signal,
-  })
-
-  const detailCall = response.toolCalls.find((tc) => tc.name === 'consultar_detalle_scope')
-  if (detailCall) {
-    const requestedScopeId = String(detailCall.args.id_scope ?? '')
-    const pregunta = String(detailCall.args.pregunta ?? 'Detalle completo del scope')
-    trace('slm.scope.consultar_detalle', {
-      parentScopeId: storage.scopeId,
-      requestedScopeId,
-      pregunta,
-    })
-
-    const detailResult = await storage.getScopeResultByMemoryId(requestedScopeId)
-    messages.push({
-      role: 'assistant',
-      content: null,
-      tool_calls: [
-        {
-          id: detailCall.id,
-          type: 'function',
-          function: {
-            name: detailCall.name,
-            arguments: detailCall.argumentsRaw || JSON.stringify(detailCall.args),
-          },
-        },
-      ],
-    })
-    messages.push({
-      role: 'tool',
-      tool_call_id: detailCall.id,
-      name: 'consultar_detalle_scope',
-      content: JSON.stringify(
-        detailResult
-          ? {
-              estado: 'encontrado',
-              id_scope: detailResult.id_scope,
-              engram_ref: detailResult.engram_ref,
-              pregunta,
-              sumario_ejecutivo: detailResult.sumario_ejecutivo,
-              suggestions: detailResult.suggestions,
-            }
-          : {
-              estado: 'no_encontrado',
-              id_scope: requestedScopeId,
-              nota: 'Usa los resultados_reducidos ya disponibles para consolidar.',
-            },
-      ),
-    })
-
-    // Second turn: force final consolidation
-    response = await callSlmWithTools({
+  try {
+    // First reduction turn (allows `consultar_detalle_scope` or `consolidar_resultados_scope`)
+    let response = await callSlmWithTools({
       file: context.file,
+      scopeId: storage.scopeId,
       messages,
-      tools: buildReductionTools(false),
+      tools: buildReductionTools(true),
       toolChoice: 'required',
       streamSuggestionsToCallback: true,
+      concurrencyGate: context.concurrencyGate,
+      requestTimeoutMs: context.requestTimeoutMs,
       onSuggestion: context.onSuggestion,
       onThinking: context.onThinking,
       signal: context.signal,
     })
-  }
 
-  const consolidateCall = response.toolCalls.find((tc) => tc.name === 'consolidar_resultados_scope') ?? response.toolCalls[0]
-  const childSuggestions = resultadosSubHilos.flatMap((r) => r.suggestions)
+    const detailCall = response.toolCalls.find((tc) => tc.name === 'consultar_detalle_scope')
+    if (detailCall) {
+      const requestedScopeId = String(detailCall.args.id_scope ?? '')
+      const pregunta = String(detailCall.args.pregunta ?? 'Detalle completo del scope')
+      trace('slm.scope.consultar_detalle', {
+        parentScopeId: storage.scopeId,
+        requestedScopeId,
+        pregunta,
+      })
 
-  let aggregatedSuggestions: SlmSuggestion[] = []
-  let sumarioConsolidado = ''
+      const detailResult = await storage.getScopeResultByMemoryId(requestedScopeId)
+      messages.push({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: detailCall.id,
+            type: 'function',
+            function: {
+              name: detailCall.name,
+              arguments: detailCall.argumentsRaw || JSON.stringify(detailCall.args),
+            },
+          },
+        ],
+      })
+      messages.push({
+        role: 'tool',
+        tool_call_id: detailCall.id,
+        name: 'consultar_detalle_scope',
+        content: JSON.stringify(
+          detailResult
+            ? {
+                estado: 'encontrado',
+                id_scope: detailResult.id_scope,
+                engram_ref: detailResult.engram_ref,
+                pregunta,
+                sumario_ejecutivo: detailResult.sumario_ejecutivo,
+                suggestions: detailResult.suggestions,
+              }
+            : {
+                estado: 'no_encontrado',
+                id_scope: requestedScopeId,
+                nota: 'Usa los resultados_reducidos ya disponibles para consolidar.',
+              },
+        ),
+      })
 
-  if (consolidateCall) {
-    if (typeof consolidateCall.args.sumario_ejecutivo === 'string') {
-      sumarioConsolidado = consolidateCall.args.sumario_ejecutivo.trim()
+      // Second turn: force final consolidation
+      response = await callSlmWithTools({
+        file: context.file,
+        scopeId: storage.scopeId,
+        messages,
+        tools: buildReductionTools(false),
+        toolChoice: 'required',
+        streamSuggestionsToCallback: true,
+        concurrencyGate: context.concurrencyGate,
+        requestTimeoutMs: context.requestTimeoutMs,
+        onSuggestion: context.onSuggestion,
+        onThinking: context.onThinking,
+        signal: context.signal,
+      })
     }
-    if (Array.isArray(consolidateCall.args.suggestions)) {
-      aggregatedSuggestions = normalizeSuggestions(consolidateCall.args.suggestions, context.file.path)
+
+    const consolidateCall = response.toolCalls.find((tc) => tc.name === 'consolidar_resultados_scope') ?? response.toolCalls[0]
+
+    let aggregatedSuggestions: SlmSuggestion[] = []
+    let sumarioConsolidado = ''
+
+    if (consolidateCall) {
+      if (typeof consolidateCall.args.sumario_ejecutivo === 'string') {
+        sumarioConsolidado = consolidateCall.args.sumario_ejecutivo.trim()
+      }
+      if (Array.isArray(consolidateCall.args.suggestions)) {
+        aggregatedSuggestions = normalizeSuggestions(consolidateCall.args.suggestions, context.file.path)
+      }
+    } else if (response.contentBuffer.trim().length > 0) {
+      aggregatedSuggestions = parseSuggestions(response.contentBuffer, true, context.file.path)
     }
-  } else if (response.contentBuffer.trim().length > 0) {
-    aggregatedSuggestions = parseSuggestions(response.contentBuffer, true, context.file.path)
-  }
 
-  // Combine consolidated suggestions with verified child findings and deduplicate via filterSuggestions
-  const combinedSuggestions = filterSuggestions(
-    aggregatedSuggestions.length > 0 ? [...aggregatedSuggestions, ...childSuggestions] : childSuggestions,
-  )
+    const combinedSuggestions = filterSuggestions(
+      aggregatedSuggestions.length > 0 ? [...aggregatedSuggestions, ...childSuggestions] : childSuggestions,
+    )
 
-  if (!sumarioConsolidado) {
-    sumarioConsolidado = resultadosSubHilos
-      .map((r) => `[${r.id_scope}] ${r.sumario_ejecutivo}`)
-      .join(' | ')
-      .slice(0, 320)
-  }
-
-  return {
-    sumario_ejecutivo: sumarioConsolidado,
-    suggestions: combinedSuggestions,
+    return {
+      sumario_ejecutivo: sumarioConsolidado || fallbackSummary,
+      suggestions: combinedSuggestions,
+    }
+  } catch (err) {
+    if (context.signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+      throw err
+    }
+    trace('slm.scope.reduction_fallback', {
+      scopeId: storage.scopeId,
+      reason: err instanceof Error ? err.message : String(err),
+      childSuggestionsCount: childSuggestions.length,
+    })
+    return {
+      sumario_ejecutivo: fallbackSummary,
+      suggestions: filterSuggestions(childSuggestions),
+    }
   }
 }
 
@@ -1258,7 +1431,7 @@ async function llamarLLMParaReduccion(
  * Every scope thread (whether the root file scope or a descendant sub-scope) executes the exact same 3-step lifecycle:
  * 1. Check `engram-ts` memory for an already-completed equivalent sub-scope; if not cached, ask the SLM via native `tools`
  *    whether to solve atomically (`ejecutar_tarea_atomica`), reuse memory (`reutilizar_scope_memoria`), or decompose (`descomponer_en_subtareas`).
- * 2. If decomposed, persist the sub-plan in `engram-ts` and launch child sub-scopes concurrently (bounded by `maxConcurrency`).
+ * 2. If decomposed, persist the sub-plan in `engram-ts` and launch child sub-scopes concurrently (bounded by `SlmConcurrencyGate`).
  * 3. Reduce and consolidate child scope results into the current Scope Storage (`engram-ts`) and return the compact result to the parent.
  */
 export async function procesarNodoScope(
@@ -1271,13 +1444,15 @@ export async function procesarNodoScope(
     throw new DOMException('Aborted', 'AbortError')
   }
 
+  await yieldToMainThread()
+
   const currentStorage = isRootScope
     ? parentStorage
     : parentStorage.createChildScopeStorage(task.id_subtarea)
 
   const slice = extractFileCodeSlice(context.file, task.lineStart, task.lineEnd)
 
-  // Pre-Step 1: Check engram-ts memory to see if an equivalent scope was already executed
+  // Pre-Step 1: Check engram-ts memory to see if an equivalent scope was already executed by a non-ancestor scope
   const cachedResult = await currentStorage.findReusableScopeResult(task, slice.rawSlice)
   if (cachedResult) {
     trace('slm.scope.memory_reused', {
@@ -1316,7 +1491,7 @@ export async function procesarNodoScope(
   })
 
   const executionPromise = (async (): Promise<ScopeExecutionResult> => {
-    const canDecompose = currentStorage.depth < context.maxDepth
+    const canDecompose = currentStorage.depth < context.maxDepth && task.requiere_sub_planificacion !== false
     const relatedHeaders = await currentStorage.listRelatedScopeHeaders(task)
     const step1Tools = buildStep1ScopeTools(canDecompose, relatedHeaders.length > 0)
 
@@ -1357,6 +1532,7 @@ export async function procesarNodoScope(
     // STEP 1: Ask the local SLM how to process this Scope via native tools
     const step1Response = await callSlmWithTools({
       file: context.file,
+      scopeId: currentStorage.scopeId,
       messages: [
         { role: 'system', content: step1SystemPrompt },
         { role: 'user', content: step1UserPrompt },
@@ -1364,6 +1540,8 @@ export async function procesarNodoScope(
       tools: step1Tools,
       toolChoice: 'required',
       streamSuggestionsToCallback: true,
+      concurrencyGate: context.concurrencyGate,
+      requestTimeoutMs: context.requestTimeoutMs,
       onSuggestion: context.onSuggestion,
       onThinking: context.onThinking,
       signal: context.signal,
@@ -1388,32 +1566,92 @@ export async function procesarNodoScope(
     // CASE B: SLM decided to decompose into concurrent sub-scopes (Recursive Step)
     if (decisionCall?.name === 'descomponer_en_subtareas' && canDecompose) {
       const rawSubtasks = Array.isArray(decisionCall.args.subtareas) ? decisionCall.args.subtareas : []
-      const subPlan: ScopeTaskDefinition[] = rawSubtasks
-        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-        .map((item, idx) => {
-          const rawSkill = typeof item.skill_requerida === 'string' ? item.skill_requerida : task.skill_requerida
-          const skill: ReviewSkillName =
-            rawSkill === 'skill_solid' || rawSkill === 'skill_security' || rawSkill === 'skill_quality' || rawSkill === 'skill_general'
-              ? rawSkill
-              : 'skill_general'
-          const lineStart = typeof item.lineStart === 'number' && item.lineStart >= 1 ? Math.round(item.lineStart) : task.lineStart
-          const lineEnd = typeof item.lineEnd === 'number' && item.lineEnd >= 1 ? Math.round(item.lineEnd) : task.lineEnd
-          return {
-            id_subtarea:
-              typeof item.id_subtarea === 'string' && item.id_subtarea.trim()
-                ? item.id_subtarea.trim()
-                : `${currentStorage.scopeId}_sub_${idx + 1}`,
-            descripcion:
-              typeof item.descripcion === 'string' && item.descripcion.trim()
-                ? item.descripcion.trim()
-                : `${task.descripcion} (Subtarea ${idx + 1})`,
-            skill_requerida: skill,
-            lineStart,
-            lineEnd,
-          }
+      const seenSubtaskKeys = new Set<string>()
+      const parentNormDesc = normalizeScopeKeyText(task.descripcion)
+
+      const subPlan: ScopeTaskDefinition[] = []
+      for (const [idx, item] of rawSubtasks.entries()) {
+        if (!item || typeof item !== 'object') continue
+        const rawItem = item as Record<string, unknown>
+        const rawSkill = typeof rawItem.skill_requerida === 'string' ? rawItem.skill_requerida : task.skill_requerida
+        const skill: ReviewSkillName =
+          rawSkill === 'skill_solid' || rawSkill === 'skill_security' || rawSkill === 'skill_quality' || rawSkill === 'skill_general'
+            ? rawSkill
+            : 'skill_general'
+        const lineStart = typeof rawItem.lineStart === 'number' && rawItem.lineStart >= 1 ? Math.round(rawItem.lineStart) : task.lineStart
+        const lineEnd = typeof rawItem.lineEnd === 'number' && rawItem.lineEnd >= 1 ? Math.round(rawItem.lineEnd) : task.lineEnd
+        const descripcion =
+          typeof rawItem.descripcion === 'string' && rawItem.descripcion.trim()
+            ? rawItem.descripcion.trim()
+            : `${task.descripcion} (${skill} #${idx + 1})`
+        const normDesc = normalizeScopeKeyText(descripcion)
+
+        const dedupKey = `${skill}:${lineStart ?? 1}-${lineEnd ?? 'end'}:${normDesc}`
+        if (seenSubtaskKeys.has(dedupKey)) continue
+        seenSubtaskKeys.add(dedupKey)
+
+        const rawId =
+          typeof rawItem.id_subtarea === 'string' && rawItem.id_subtarea.trim()
+            ? rawItem.id_subtarea.trim()
+            : `${currentStorage.scopeId}_sub_${idx + 1}`
+        const safeSubtaskId =
+          rawId === currentStorage.scopeId || currentStorage.ancestorScopeIds.has(rawId)
+            ? `${currentStorage.scopeId}_${rawId}_${idx + 1}`
+            : rawId
+
+        // If a child subtask covers the exact same range and task as its parent, force atomic execution at the child level
+        const sameRangeAsParent =
+          (lineStart ?? slice.startLine) === slice.startLine && (lineEnd ?? slice.endLine) === slice.endLine
+        const sameAsParent = sameRangeAsParent && normDesc === parentNormDesc
+
+        subPlan.push({
+          id_subtarea: safeSubtaskId,
+          descripcion,
+          skill_requerida: skill,
+          lineStart,
+          lineEnd,
+          requiere_sub_planificacion: sameAsParent ? false : undefined,
         })
 
+        if (subPlan.length >= MAX_SUBTASKS_PER_SCOPE) break
+      }
+
+      // Guard against degenerate single-child decomposition with identical range: execute atomically instead of recursing
+      if (
+        subPlan.length === 1 &&
+        (subPlan[0].lineStart ?? slice.startLine) === slice.startLine &&
+        (subPlan[0].lineEnd ?? slice.endLine) === slice.endLine
+      ) {
+        trace('slm.scope.single_subtask_collapsed_to_atomic', {
+          scopeId: currentStorage.scopeId,
+          depth: currentStorage.depth,
+          subtaskId: subPlan[0].id_subtarea,
+        })
+        const singleChild = subPlan[0]
+        const resultadoAtomico = await ejecutarSkillLocal(
+          singleChild.skill_requerida ?? 'skill_general',
+          {
+            foco: singleChild.descripcion,
+            lineStart: singleChild.lineStart,
+            lineEnd: singleChild.lineEnd,
+          },
+          singleChild,
+          currentStorage,
+          context,
+        )
+        return currentStorage.saveScopeResult({
+          task: singleChild,
+          codeSlice: slice.rawSlice,
+          sumarioEjecutivo: resultadoAtomico.sumario_ejecutivo,
+          suggestions: resultadoAtomico.suggestions,
+          isAggregated: false,
+        })
+      }
+
       if (subPlan.length > 0) {
+        // Clear parent from inFlight before launching children so no child can ever collide with its parent's inFlight entry
+        currentStorage.clearInFlight(sigTag)
+
         const justification = typeof decisionCall.args.justificacion === 'string' ? decisionCall.args.justificacion : undefined
         await currentStorage.saveSubPlan(subPlan, justification)
 
@@ -1424,11 +1662,9 @@ export async function procesarNodoScope(
           maxConcurrency: context.maxConcurrency,
         })
 
-        // STEP 2: Concurrent execution of child sub-scopes (bounded by maxConcurrency)
-        const resultadosSubHilos = await runWithConcurrency(
-          subPlan,
-          context.maxConcurrency,
-          (subTarea) => procesarNodoScope(subTarea, currentStorage, context, false),
+        // STEP 2: Concurrent execution of child sub-scopes (HTTP concurrency is globally bounded by context.concurrencyGate)
+        const resultadosSubHilos = await Promise.all(
+          subPlan.map((subTarea) => procesarNodoScope(subTarea, currentStorage, context, false)),
         )
 
         // STEP 3: Reduction / Aggregation of child scopes into current Scope Storage
@@ -1533,6 +1769,7 @@ async function requestFileAnalysis(
   const prompts = getReviewPromptConfig()
   const maxDepth = options?.maxDepth ?? config.maxDepth
   const maxConcurrency = options?.maxConcurrency ?? config.maxConcurrency
+  const concurrencyGate = options?.concurrencyGate ?? new SlmConcurrencyGate(maxConcurrency)
   const project = options?.project ?? (options?.reviewId ? `review-${options.reviewId}` : 'codereview-default')
   const rootScopeId = `scope_file_${file.path.replace(/[^a-zA-Z0-9_.-]/g, '_')}`
 
@@ -1558,6 +1795,8 @@ async function requestFileAnalysis(
       baseInstructions: prompts.reviewInstructions,
       maxDepth,
       maxConcurrency,
+      concurrencyGate,
+      requestTimeoutMs: options?.requestTimeoutMs,
       onSuggestion,
       onThinking,
       signal,
@@ -1591,10 +1830,15 @@ export async function analyzeFileWithSlm(
   signal?: AbortSignal,
   options?: AnalyzeFileOptions,
 ) {
+  const config = getSlmConfig()
+  const sharedGate = options?.concurrencyGate ?? new SlmConcurrencyGate(options?.maxConcurrency ?? config.maxConcurrency)
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     if (signal?.aborted) return []
     try {
-      const { suggestions } = await requestFileAnalysis(file, onSuggestion, onThinking, signal, options)
+      const { suggestions } = await requestFileAnalysis(file, onSuggestion, onThinking, signal, {
+        ...options,
+        concurrencyGate: sharedGate,
+      })
       trace('slm.file.parsed', { filePath: file.path, attempt, suggestions: suggestions.length })
       return suggestions
     } catch (error) {

@@ -12,6 +12,7 @@ import {
   buildStep1ScopeTools,
   procesarNodoScope,
   runWithConcurrency,
+  SlmConcurrencyGate,
 } from '../src/slm-client'
 import { CommentCategory, CommentSeverity } from '../src/enums'
 import type { StoredReviewFile } from '../src/review-db'
@@ -478,6 +479,129 @@ async function runTests() {
 
     assert.deepEqual(results, [10, 20, 30, 40, 50, 60])
     assert.ok(maxObservedConcurrency <= 2, `La concurrencia máxima observada (${maxObservedConcurrency}) no debe superar el límite (2)`)
+  }
+
+  // Test 5: Prevención de interbloqueo padre-hijo cuando el SLM omite rangos o skills en subtareas y límite global SlmConcurrencyGate
+  {
+    console.log('Test 5: Prevención de interbloqueo padre-hijo (inFlightMap) y control global de peticiones HTTP con SlmConcurrencyGate')
+    const engram = new Engram({ store: new InMemoryEngramStore() })
+    const sampleFile: StoredReviewFile = {
+      reviewId: 505,
+      path: 'src/legacy/OrderController.ts',
+      status: 'modified',
+      content: Array.from({ length: 15 }, (_, i) => `export const step_${i + 1} = ${i + 1};`).join('\n'),
+    }
+
+    let inFlightHttpCalls = 0
+    let maxObservedHttpCalls = 0
+    const originalFetch = globalThis.fetch
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      inFlightHttpCalls += 1
+      maxObservedHttpCalls = Math.max(maxObservedHttpCalls, inFlightHttpCalls)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      try {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        const messages = (body.messages as Array<{ role: string; content: string }>) ?? []
+        const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+
+        // El nodo raíz descompone en 2 subtareas pero el modelo pequeño omite lineStart/lineEnd y usa skill_general en una de ellas
+        // (antes esto colisionaba con el sigTag inFlight del padre y dejaba colgada la promesa tras guardar las demás en engram)
+        if (lastUserMessage.includes('SCOPE ACTUAL: scope_file_src_legacy_OrderController.ts')) {
+          return createSseToolCallResponse('descomponer_en_subtareas', {
+            justificacion: 'Dividir revisión general y seguridad sin especificar rangos de línea.',
+            subtareas: [
+              {
+                id_subtarea: 'sub_general_full_file',
+                descripcion: 'Analizar estructura general del controlador',
+                skill_requerida: 'skill_general',
+                // Sin lineStart ni lineEnd -> hereda 1..15 igual que el padre
+              },
+              {
+                id_subtarea: 'sub_security_full_file',
+                descripcion: 'Revisar exposición de datos en el controlador',
+                skill_requerida: 'skill_security',
+              },
+            ],
+          })
+        }
+
+        if (lastUserMessage.includes('SCOPE ACTUAL: sub_general_full_file')) {
+          return createSseToolCallResponse('ejecutar_tarea_atomica', {
+            skill_a_usar: 'skill_general',
+            argumentos: {
+              foco: 'Revisión general',
+              sumario_ejecutivo: 'Falta tipado explícito en línea 3.',
+              suggestions: [
+                {
+                  id: 'gen-1',
+                  filePath: sampleFile.path,
+                  line: 3,
+                  severity: 'baja',
+                  category: 'maintainability',
+                  message: 'Constante exportada sin contrato explícito',
+                  recommendation: 'Declarar tipo o interfaz del paso de orden',
+                },
+              ],
+            },
+          })
+        }
+
+        if (lastUserMessage.includes('SCOPE ACTUAL: sub_security_full_file')) {
+          return createSseToolCallResponse('ejecutar_tarea_atomica', {
+            skill_a_usar: 'skill_security',
+            argumentos: {
+              foco: 'Seguridad general',
+              sumario_ejecutivo: 'Sin hallazgos de seguridad.',
+              suggestions: [],
+            },
+          })
+        }
+
+        if (lastUserMessage.includes('Consolida los engramas resultantes')) {
+          return createSseToolCallResponse('consolidar_resultados_scope', {
+            sumario_ejecutivo: 'Consolidación completada sin bloqueo.',
+            suggestions: [
+              {
+                id: 'gen-1',
+                filePath: sampleFile.path,
+                line: 3,
+                severity: 'baja',
+                category: 'maintainability',
+                message: 'Constante exportada sin contrato explícito',
+                recommendation: 'Declarar tipo o interfaz del paso de orden',
+              },
+            ],
+          })
+        }
+
+        throw new Error(`Llamada inesperada en Test 5: ${lastUserMessage.slice(0, 100)}`)
+      } finally {
+        inFlightHttpCalls -= 1
+      }
+    }) as typeof fetch
+
+    try {
+      const gate = new SlmConcurrencyGate(1)
+      const result = await analyzeFileWithSlm(sampleFile, undefined, undefined, undefined, {
+        reviewId: 505,
+        project: 'review-505',
+        engram,
+        maxDepth: 3,
+        maxConcurrency: 2,
+        concurrencyGate: gate,
+      })
+
+      assert.equal(result.length, 1, 'Debe finalizar sin interbloqueo padre-hijo y devolver la sugerencia consolidada')
+      assert.equal(result[0].line, 3)
+      assert.equal(
+        maxObservedHttpCalls,
+        1,
+        `El semáforo SlmConcurrencyGate(1) debe limitar las peticiones HTTP simultáneas a 1 (observado: ${maxObservedHttpCalls})`,
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   }
 
   console.log('✓ Todas las pruebas de Memoria Engram-ts y Orquestación por Scopes pasaron exitosamente.')

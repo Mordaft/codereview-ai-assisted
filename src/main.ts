@@ -144,7 +144,8 @@ async function start() {
         const fileInfo = thinking.filePath
           ? `${thinking.filePath}${thinking.fileIndex && thinking.totalFiles ? ` (${thinking.fileIndex}/${thinking.totalFiles})` : ''}`
           : ''
-        const thoughtText = thinking.thought ? thinking.thought : t('reviews.card.analyzingCode')
+        const rawThought = thinking.thought ? thinking.thought : t('reviews.card.analyzingCode')
+        const thoughtText = rawThought.length > 320 ? `…${rawThought.slice(-320)}` : rawThought
         const labelText =
           thinking.phase === 'suggesting'
             ? t('reviews.card.generatingProposals')

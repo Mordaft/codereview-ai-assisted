@@ -66,15 +66,25 @@ export function renderSettings(app: HTMLElement, options: SettingsOptions) {
               <p class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.inferenceDesc')}</p>
             </div>
             <div class="form-grid form-grid--compact">
-              <label>
+              <label for="slm-temperature">
                 ${t('settings.tempLabel')}
-                <input name="temperature" type="number" value="${config.temperature}" min="0" max="2" step="0.1" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
-                <small class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.tempHint')}</small>
+                <input id="slm-temperature" name="temperature" type="number" value="${config.temperature}" min="0" max="2" step="0.1" aria-describedby="slm-temperature-hint" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
+                <small id="slm-temperature-hint" class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.tempHint')}</small>
               </label>
-              <label>
+              <label for="slm-max-tokens">
                 ${t('settings.maxTokensLabel')}
-                <input name="maxTokens" type="number" value="${config.maxTokens}" min="256" max="32768" step="256" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
-                <small class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.maxTokensHint')}</small>
+                <input id="slm-max-tokens" name="maxTokens" type="number" value="${config.maxTokens}" min="256" max="32768" step="256" aria-describedby="slm-max-tokens-hint" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
+                <small id="slm-max-tokens-hint" class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.maxTokensHint')}</small>
+              </label>
+              <label for="slm-max-depth">
+                ${t('settings.maxDepthLabel')}
+                <input id="slm-max-depth" name="maxDepth" type="number" value="${config.maxDepth}" min="1" max="5" step="1" aria-describedby="slm-max-depth-hint" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
+                <small id="slm-max-depth-hint" class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.maxDepthHint')}</small>
+              </label>
+              <label for="slm-max-concurrency">
+                ${t('settings.maxConcurrencyLabel')}
+                <input id="slm-max-concurrency" name="maxConcurrency" type="number" value="${config.maxConcurrency}" min="1" max="6" step="1" aria-describedby="slm-max-concurrency-hint" required class="bg-brand-surface-light text-brand-primary-light border-brand-line-light dark:!bg-[#182521] dark:!text-brand-primary-dark dark:!border-brand-line-dark">
+                <small id="slm-max-concurrency-hint" class="text-brand-muted-light dark:!text-brand-muted-dark">${t('settings.maxConcurrencyHint')}</small>
               </label>
             </div>
           </div>
@@ -205,6 +215,8 @@ export function renderSettings(app: HTMLElement, options: SettingsOptions) {
       model: String(form.get('model')),
       temperature: Number(form.get('temperature')),
       maxTokens: Number(form.get('maxTokens')),
+      maxDepth: Number(form.get('maxDepth') || config.maxDepth),
+      maxConcurrency: Number(form.get('maxConcurrency') || config.maxConcurrency),
     }
     const nextPrompts = { reviewInstructions: String(form.get('reviewInstructions')) }
     const saveButton = document.querySelector<HTMLButtonElement>('#save-slm')!
@@ -233,6 +245,8 @@ export function renderSettings(app: HTMLElement, options: SettingsOptions) {
         model: String(values.get('model')),
         temperature: Number(values.get('temperature')),
         maxTokens: Number(values.get('maxTokens')),
+        maxDepth: Number(values.get('maxDepth') || config.maxDepth),
+        maxConcurrency: Number(values.get('maxConcurrency') || config.maxConcurrency),
       })
       status.textContent = t('settings.modelsAvailable', { count: result.data?.length ?? 0 })
       status.className = 'settings-status settings-status--success'

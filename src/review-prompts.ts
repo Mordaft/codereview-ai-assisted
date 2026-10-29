@@ -30,6 +30,7 @@ Reglas del contrato: suggestions debe ser siempre un array; line debe ser un nú
 const storageKey = 'codereview-review-prompts'
 
 export function getReviewPromptConfig(): ReviewPromptConfig {
+  if (typeof localStorage === 'undefined') return { reviewInstructions: defaultReviewInstructions }
   const savedConfig = localStorage.getItem(storageKey)
   if (!savedConfig) return { reviewInstructions: defaultReviewInstructions }
   try {

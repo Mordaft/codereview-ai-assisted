@@ -4,15 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node -e \"const fs=require('fs'); const p='node_modules/engram-ts/package.json'; if(fs.existsSync(p)){ const pkg=JSON.parse(fs.readFileSync(p,'utf8')); if(pkg.exports&&pkg.exports['.']&&!pkg.exports['.'].default){ pkg.main='./dist/index.js'; pkg.types='./dist/index.d.ts'; pkg.exports['.'].default='./dist/index.js'; fs.writeFileSync(p,JSON.stringify(pkg,null,2)); } } if(!fs.existsSync('node_modules/engram-ts/dist/index.js')&&fs.existsSync('../engram-ts/dist')) fs.cpSync('../engram-ts/dist','node_modules/engram-ts/dist',{recursive:true});\"",
     "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "jiti tests/adapters.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/history.test.ts && jiti tests/slm.test.ts",
+    "test": "jiti tests/adapters.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/history.test.ts && jiti tests/slm.test.ts && jiti tests/engram-scope.test.ts",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
+    "@types/lunr": "^2.3.7",
     "autoprefixer": "^10.5.5",
     "gh-pages": "^6.3.0",
+    "jiti": "1.21.7",
     "postcss": "^8.5.28",
     "tailwindcss": "^3.4.17",
     "typescript": "~6.0.2",
@@ -20,6 +23,8 @@
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.14",
-    "dexie": "^4.4.5"
+    "dexie": "^4.4.5",
+    "engram-ts": "github:Mordaft/engram-ts",
+    "lunr": "^2.3.9"
   }
 }

@@ -8,6 +8,7 @@ import {
 import { clearSlmSuggestions, listReviewFiles, saveSlmSuggestions, updateReviewAnalysisMetrics, updateReviewProgress, updateReviewStatus } from './review-db'
 import { analyzeFileWithSlm } from './slm-client'
 import { getSlmConfig } from './slm-config'
+import { getSharedEngram } from './review-memory'
 import { selectAnalyzableReviewFiles } from './review-scope'
 import { emitReviewProgress, emitReviewThinking } from './review-events'
 import { trace } from './diagnostics'
@@ -107,7 +108,9 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
   const startedAt = performance.now()
   const files = await listReviewFiles(state.reviewId)
   const analyzableFiles = selectAnalyzableReviewFiles(files)
-  trace('slm.analysis.scope', { reviewId: state.reviewId, totalFiles: files.length, analyzableFiles: analyzableFiles.length, skippedFiles: files.length - analyzableFiles.length })
+  const engram = getSharedEngram()
+  const projectScope = `review-${state.reviewId}`
+  trace('slm.analysis.scope', { reviewId: state.reviewId, projectScope, totalFiles: files.length, analyzableFiles: analyzableFiles.length, skippedFiles: files.length - analyzableFiles.length })
   await clearSlmSuggestions(state.reviewId)
   const suggestions: ReviewSuggestion[] = []
   for (const [index, file] of analyzableFiles.entries()) {
@@ -172,6 +175,11 @@ async function analyzeWithLocalSlm(state: typeof ReviewState.State) {
           })
         },
         signal,
+        {
+          reviewId: state.reviewId,
+          project: projectScope,
+          engram,
+        },
       )
     } catch (err) {
       if (signal.aborted) {

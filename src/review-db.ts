@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie'
 import { parseReviewUrl } from './platform-url'
 import type { RemoteChange, RemoteComment, RemoteFile } from './platform-api'
 import { getSlmConfig } from './slm-config'
+import { resetEngramMemoryDatabase } from './review-memory'
 import { trace } from './diagnostics'
 import {
   CommentCategory,
@@ -316,6 +317,7 @@ export async function addManualReviewComment(reviewId: number, input: {
 export async function resetDatabaseAndCache() {
   try {
     await database.delete()
+    await resetEngramMemoryDatabase()
   } catch (err) {
     console.warn('[DB] Error eliminando Dexie:', err)
   }
@@ -347,4 +349,3 @@ export async function resetDatabaseAndCache() {
 
   window.location.reload()
 }
-

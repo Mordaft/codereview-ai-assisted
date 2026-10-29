@@ -55,6 +55,9 @@ export interface TranslationDictionary {
       slmThinking: string
       analyzingCode: string
       generatingProposals: string
+      planningScopes: string
+      aggregatingScopes: string
+      reusingScopeMemory: string
       fileProgress: string
     }
     empty: {
@@ -151,6 +154,10 @@ export interface TranslationDictionary {
     tempHint: string
     maxTokensLabel: string
     maxTokensHint: string
+    maxDepthLabel: string
+    maxDepthHint: string
+    maxConcurrencyLabel: string
+    maxConcurrencyHint: string
     promptsEyebrow: string
     promptsTitle: string
     promptsDesc: string

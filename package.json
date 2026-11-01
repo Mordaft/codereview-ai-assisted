@@ -25,6 +25,10 @@
     "@langchain/langgraph": "^1.5.3",
     "dexie": "^4.4.7",
     "engram-ts": "github:Mordaft/engram-ts",
-    "lunr": "^2.3.9"
+    "lunr": "^2.3.9",
+    "zod": ">=4.6.6"
+  },
+  "overrides": {
+    "zod": ">=4.6.6"
   }
 }

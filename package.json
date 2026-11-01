@@ -13,17 +13,17 @@
   },
   "devDependencies": {
     "@types/lunr": "^2.3.7",
-    "autoprefixer": "^10.5.5",
+    "autoprefixer": "^10.6.2",
     "gh-pages": "^6.3.0",
     "jiti": "1.21.7",
-    "postcss": "^8.5.28",
-    "tailwindcss": "^3.4.17",
-    "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "postcss": "^8.5.32",
+    "tailwindcss": "^3.4.19",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5"
   },
   "dependencies": {
-    "@langchain/langgraph": "^1.4.14",
-    "dexie": "^4.4.5",
+    "@langchain/langgraph": "^1.5.3",
+    "dexie": "^4.4.7",
     "engram-ts": "github:Mordaft/engram-ts",
     "lunr": "^2.3.9"
   }
